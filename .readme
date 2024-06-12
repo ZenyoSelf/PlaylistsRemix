@@ -1,5 +1,13 @@
-setup remix-auth-spotify to handle session and token (also a small tutorial on session remix, which is useful for youtube / soundcloud later)
-make it work lol
-Get liked songs + table + refresh button
+
+Get liked songs + table + refresh button :
+
+I want to add newest addition.
+
+When i retrieve songs from spotify liked tracks, i receive an added_at whicxh means date of addition.
+
+I need a global "Last_refresh"
+
+when i get the spotify songs, i need to check their "added_at" to be higher than "last_refresh" of the table user
+
 Download
 update db supabase
