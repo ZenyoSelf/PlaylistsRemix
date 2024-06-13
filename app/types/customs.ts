@@ -1,3 +1,5 @@
+import { ToastMessage } from "remix-toast";
+
 export interface Song {
   id: number;
   title: string | null;
@@ -6,4 +8,9 @@ export interface Song {
   playlist: string | null;
   platform: "Youtube" | "Spotify" | "Soundcloud";
   downloaded: boolean | null;
+}
+
+export interface TracksRefresh {
+  songs: Song[];
+  toast: ToastMessage;
 }

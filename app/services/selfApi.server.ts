@@ -22,7 +22,6 @@ export async function getLikedSongsSpotify(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     likedSongs = likedSongs.concat(data.items); // Concatenate new songs to the existing list
     offset += limit; // Increment offset for pagination
-    console.log(data);
     return data;
   } catch (error) {
     console.error("Error fetching liked songs:", error);
