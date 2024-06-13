@@ -1,13 +1,6 @@
 
-Get liked songs + table + refresh button :
+Update the table stylish.
+Add remix-toastify and notifications.
+Download to playlist name (zip ?).
 
-I want to add newest addition.
-
-When i retrieve songs from spotify liked tracks, i receive an added_at whicxh means date of addition.
-
-I need a global "Last_refresh"
-
-when i get the spotify songs, i need to check their "added_at" to be higher than "last_refresh" of the table user
-
-Download
-update db supabase
+Massive script to get all spotify likes, then get the script ready for other playlists (playlistName)

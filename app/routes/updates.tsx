@@ -1,43 +1,47 @@
-import { LoaderFunctionArgs, TypedResponse } from "@remix-run/node";
+import { LoaderFunctionArgs, json } from "@remix-run/node";
 import { Form, useLoaderData } from "@remix-run/react";
+import { useState } from "react";
 import { Session } from "remix-auth-spotify";
 import { spotifyStrategy } from "~/services/auth.server";
+import { getUserSongs } from "~/services/supabase.server";
+import { Song } from "~/types/customs";
 
 interface LoaderData {
   session: Session | null;
-  spotifyLikedSongs:
-    | TypedResponse<SpotifyApi.UsersSavedTracksResponse | undefined>
-    | undefined;
+  songs: Song[];
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
   //Here handle all playlists and liked tracks
   //For now, only selected playlists
-  const session = spotifyStrategy.getSession(request);
+  const session = await spotifyStrategy.getSession(request);
 
-  return session;
-  /* if (session == null) {
-    const likedsongs = json(await getLikedSongsSpotify(0, 20));
-    const data: LoaderData = {
-      session: session,
-      spotifyLikedSongs: likedsongs,
-    };
+  if (!session) {
+    return json<LoaderData>({ session: null, songs: [] });
+  }
 
-    
-  } else {
-    const data: LoaderData = {
-      session: null,
-      spotifyLikedSongs: undefined,
-    };
-    return data;
-  } */
+  const userSongs = await getUserSongs(request);
+  return json<LoaderData>({ session, songs: userSongs });
 }
 
 export default function Updates() {
-  const data = useLoaderData<typeof loader>();
-  const user = data?.user;
-  console.log(user);
-  //const spotifyLikedSongs = data.spotifyLikedSongs;
+  const { session, songs: initialSongs } = useLoaderData<typeof loader>();
+  const [songs, setSongs] = useState(initialSongs);
+
+  const handleRefresh = async () => {
+    if (session) {
+      const response = await fetch("/tracks/refresh", {
+        method: "POST",
+      });
+      if (response.ok) {
+        const data: { songs: Song[] } = await response.json();
+        console.log("WEWEWE");
+        console.log(data);
+        setSongs(data.songs);
+      }
+    }
+  };
+
   return (
     <>
       <div style={{ fontFamily: "system-ui, sans-serif", lineHeight: "1.8" }}>
@@ -48,17 +52,18 @@ export default function Updates() {
           <tbody>
             <tr>
               <td>
-                <Form action={"/tracks/refresh"} method="post">
-                  {" "}
-                  <button>Refresh</button>
-                </Form>{" "}
+                {" "}
+                <button onClick={handleRefresh}>Refresh</button>
               </td>{" "}
               <td>
                 {" "}
-                <Form action={user ? "/logout" : "/auth/spotify"} method="post">
+                <Form
+                  action={session?.user ? "/logout" : "/auth/spotify"}
+                  method="post"
+                >
                   {" "}
                   <button>
-                    {user ? "Logout Spotify" : "Log in with Spotify"}
+                    {session?.user ? "Logout Spotify" : "Log in with Spotify"}
                   </button>
                 </Form>
               </td>
@@ -80,13 +85,15 @@ export default function Updates() {
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-          </tr>
+          {songs.map((song) => (
+            <tr key={song.id}>
+              <td>{song.platform}</td>
+              <td>{song.title}</td>
+              <td>{song.artists?.join(", ")}</td>
+              <td>{song.album}</td>
+              <td>{song.playlist}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </>

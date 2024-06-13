@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { spotifyStrategy } from "./auth.server";
 import { getLikedSongsSpotify } from "./selfApi.server";
+import { Song } from "~/types/customs";
 
 const supabaseUrl = "https://yukhjxbymehlnclhrehl.supabase.co";
 const supabaseKey = process.env.SUPABASE_KEY;
@@ -23,13 +24,37 @@ export async function getLatestRefresh(email: string) {
   const { data, error } = await supabase
     .from("user")
     .select("last_refresh")
-    .filter("user", "eq", email);
+    .eq("user", email)
+    .single();
   if (error) {
-    console.log(error);
     throw new Error("getLatestRefresh error");
   } else {
-    return data;
+    return data.last_refresh;
   }
+}
+
+export async function getUserSongs(request: Request): Promise<Song[]> {
+  const session = await spotifyStrategy.getSession(request);
+  if (!session) {
+    throw new Error("No session established to spotify");
+  }
+  const { data, error } = await supabase
+    .from("song")
+    .select("*")
+    .eq("user", session.user!.email);
+  if (error) {
+    console.error("Error fetching songs from Supabase:", error);
+    return [];
+  }
+  return data.map((item) => ({
+    id: item.id,
+    title: item.title,
+    artists: item.artist_name,
+    album: item.album,
+    playlist: item.playlist,
+    platform: item.platform,
+    downloaded: item.downloaded,
+  }));
 }
 
 export async function populateSongsForUser(request: Request) {
@@ -41,28 +66,42 @@ export async function populateSongsForUser(request: Request) {
 
   const latestRefresh = await getLatestRefresh(session.user!.email);
 
-  const dataInsert: unknown[] = [];
-  likedsongs?.items.forEach((item) => {
-    const artist_name = item.track.artists.map((t) => t.name);
-    console.log(item.added_at);
-    //2024-06-12T19:19:52.167887+00:00
-    dataInsert.push({
-      artist_name: artist_name,
-      downloaded: false,
-      title: item.track.name,
-      album: item.track.album.name,
-      user: session.user?.email,
-      playlist: "SpotifyLikedSongs",
-      platform: "Spotify",
-      platform_added_at: item.added_at,
+  const items = likedsongs?.items.filter(
+    (t) => new Date(t.added_at) > new Date(latestRefresh)
+  );
+  if (items && items.length > 0) {
+    const dataInsert: unknown[] = [];
+    items.forEach((item) => {
+      const artist_name = item.track.artists.map((t) => t.name);
+      dataInsert.push({
+        artist_name: artist_name,
+        downloaded: false,
+        title: item.track.name,
+        album: item.track.album.name,
+        user: session.user?.email,
+        playlist: "SpotifyLikedSongs",
+        platform: "Spotify",
+        platform_added_at: new Date(item.added_at).toISOString(),
+      });
     });
-  });
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { data: dataInsertResponse, error: dataInsertError } = await supabase
+      .from("song")
+      .insert(dataInsert)
+      .select();
+    if (dataInsertError != null)
+      throw new Error("Error during inserting new songs");
 
-  const { data, error } = await supabase
-    .from("song")
-    .insert(dataInsert)
-    .select();
-  if (error != null) console.log(error);
-
-  return data;
+    const currentDatetimeZ = new Date().toISOString().toLocaleString();
+    const { error: ErrorDateTimeZ } = await supabase
+      .from("user")
+      .update({ last_refresh: currentDatetimeZ })
+      .eq("user", session.user?.email);
+    if (ErrorDateTimeZ != null)
+      throw new Error("Error during updating new last_refresh");
+  }
+  const userSongs = await getUserSongs(request);
+  console.log("all data in populateSongsForUser (getusersongs)");
+  console.log(userSongs);
+  return userSongs;
 }

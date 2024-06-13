@@ -9,5 +9,8 @@ export function loader() {
 
 export async function action({ request }: ActionFunctionArgs) {
   //Get newest addition, then add to db
-  return populateSongsForUser(request);
+  const songs = await populateSongsForUser(request);
+  console.log("all data ");
+  console.log(songs);
+  return { songs: songs };
 }
