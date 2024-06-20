@@ -53,6 +53,7 @@ export async function getUserSongs(request: Request): Promise<Song[]> {
     album: item.album,
     playlist: item.playlist,
     platform: item.platform,
+    url: item.url,
     downloaded: item.downloaded,
   }));
 }
@@ -71,6 +72,7 @@ export async function populateSongsForUser(request: Request) {
   );
   if (items && items.length > 0) {
     const dataInsert: unknown[] = [];
+
     items.forEach((item) => {
       const artist_name = item.track.artists.map((t) => t.name);
       dataInsert.push({
@@ -81,6 +83,7 @@ export async function populateSongsForUser(request: Request) {
         user: session.user?.email,
         playlist: "SpotifyLikedSongs",
         platform: "Spotify",
+        url: item.track.uri,
         platform_added_at: new Date(item.added_at).toISOString(),
       });
     });
@@ -89,8 +92,10 @@ export async function populateSongsForUser(request: Request) {
       .from("song")
       .insert(dataInsert)
       .select();
-    if (dataInsertError != null)
+    if (dataInsertError != null) {
+      console.log(dataInsertError);
       throw new Error("Error during inserting new songs");
+    }
 
     const currentDatetimeZ = new Date().toISOString().toLocaleString();
     const { error: ErrorDateTimeZ } = await supabase
@@ -101,7 +106,5 @@ export async function populateSongsForUser(request: Request) {
       throw new Error("Error during updating new last_refresh");
   }
   const userSongs = await getUserSongs(request);
-  console.log("all data in populateSongsForUser (getusersongs)");
-  console.log(userSongs);
   return userSongs;
 }

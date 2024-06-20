@@ -1,18 +1,35 @@
-import { LoaderFunctionArgs, json } from "@remix-run/node";
-import { Form, useLoaderData } from "@remix-run/react";
-import { useState } from "react";
+import { ActionFunction, LoaderFunctionArgs, json } from "@remix-run/node";
+import { Form, useLoaderData, useSubmit } from "@remix-run/react";
+import { useRef, useState } from "react";
 import { Session } from "remix-auth-spotify";
 import { ToastMessage } from "remix-toast";
 import { spotifyStrategy } from "~/services/auth.server";
 import { getUserSongs } from "~/services/supabase.server";
 import { Song } from "~/types/customs";
-import { toast as notify } from "sonner";
-import { RiCheckLine } from "react-icons/ri";
-import { FaDownload } from "react-icons/fa6";
+import { FaSpotify } from "react-icons/fa";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "~/components/ui/table";
+import {
+  Menubar,
+  MenubarContent,
+  MenubarItem,
+  MenubarMenu,
+  MenubarTrigger,
+} from "~/components/ui/menubar";
+
+import { Check, Download } from "lucide-react";
+import { downloadSpotifySong } from "~/services/selfApi.server";
 interface LoaderData {
   session: Session | null;
   songs: Song[];
-  messages: ToastMessage | null;
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -21,23 +38,62 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const session = await spotifyStrategy.getSession(request);
 
   if (!session) {
-    return json<LoaderData>({ session: null, songs: [], messages: null });
+    return json<LoaderData>({ session: null, songs: [] });
   }
 
   const userSongs = await getUserSongs(request);
-  return json<LoaderData>({ session, songs: userSongs, messages: null });
+  return json<LoaderData>({ session, songs: userSongs });
 }
 
-export default function Updates() {
-  const {
-    session,
-    songs: initialSongs,
-    messages,
-  } = useLoaderData<typeof loader>();
-  const [songs, setSongs] = useState(initialSongs);
+export const action: ActionFunction = async ({ request }) => {
+  const formData = await request.formData();
+  const songName = formData.get("songName") as string;
+  const artists = formData.getAll("artist") as string[];
+  const playlistName = formData.get("playlistName") as string;
 
-  const handleDl = async (song: Song) => {
-    alert(song.title);
+  try {
+    const result = await downloadSpotifySong(
+      songName,
+      artists,
+      playlistName
+    ).catch((reason) => {
+      console.log(reason);
+    });
+    console.log(result);
+    return json({ success: true, result });
+  } catch (error) {
+    return json({ success: false, error });
+  }
+};
+
+export default function Updates() {
+  const { session, songs: initialSongs } = useLoaderData<typeof loader>();
+  const [songs, setSongs] = useState(initialSongs);
+  const submit = useSubmit();
+  const loginFormRef = useRef<HTMLFormElement>(null);
+  const handleLoginLogout = () => {
+    if (loginFormRef.current) {
+      loginFormRef.current.submit();
+    }
+  };
+
+  const handleSubmitSong = (
+    songName: string,
+    songUrl: string,
+    playlistName: string,
+    artists: string[] | null
+  ) => {
+    const formData = new FormData();
+    formData.append("songName", songName.toString());
+    formData.append("songUrl", songUrl.toString());
+    formData.append("playlistName", playlistName.toString());
+    if (artists) {
+      artists.forEach((artist) => {
+        formData.append("artist", artist);
+      });
+    }
+
+    submit(formData, { method: "post", action: "/updates" });
   };
 
   const handleRefresh = async () => {
@@ -48,14 +104,7 @@ export default function Updates() {
       if (response.ok) {
         const data: { songs: Song[]; toast: ToastMessage } =
           await response.json();
-        console.log("WEWEWE");
-        console.log(data);
         setSongs(data.songs);
-        if (data.toast.type == "success") {
-          notify.success(data.toast.message);
-        } else if (data.toast.type == "error") {
-          notify.error(data.toast.message);
-        }
       }
     }
   };
@@ -66,61 +115,83 @@ export default function Updates() {
         <h1>Newest addition</h1>
       </div>
       <div>
-        <table>
-          <tbody>
-            <tr>
-              <td>
-                <button onClick={handleRefresh}>Refresh</button>
-              </td>
-              <td>
-                <Form
-                  action={session?.user ? "/logout" : "/auth/spotify"}
-                  method="post"
-                >
-                  <button>
-                    {session?.user ? "Logout Spotify" : "Log in with Spotify"}
-                  </button>
-                </Form>
-              </td>
-              <td>
-                <button>Connect with Youtube Music</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <Menubar>
+          <MenubarMenu>
+            <MenubarTrigger>Login</MenubarTrigger>
+            <MenubarContent>
+              <Form
+                ref={loginFormRef}
+                action={session?.user ? "/logout" : "/auth/spotify"}
+                method="post"
+              >
+                <MenubarItem inset onClick={handleLoginLogout}>
+                  <div className="flex flex-nowrap">
+                    <p className="flex-auto">
+                      {session?.user ? "Logout" : "Log in"}
+                    </p>
+                    <FaSpotify className="flex-auto ml-2" size={24} />
+                  </div>
+                </MenubarItem>
+              </Form>
+            </MenubarContent>
+          </MenubarMenu>
+          <MenubarMenu>
+            <MenubarTrigger>Refresh</MenubarTrigger>
+            <MenubarContent>
+              <MenubarItem onClick={handleRefresh}>Refresh All</MenubarItem>
+            </MenubarContent>
+          </MenubarMenu>
+        </Menubar>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Platform</th>
-            <th>Title</th>
-            <th>Artists</th>
-            <th>Album</th>
-            <th>Playlist</th>
-            <th>Downloaded ?</th>
-          </tr>
-        </thead>
-        <tbody>
-          {songs.map((song) => (
-            <tr key={song.id}>
-              <td>{song.platform}</td>
-              <td>{song.title}</td>
-              <td>{song.artists?.join(", ")}</td>
-              <td>{song.album}</td>
-              <td>{song.playlist}</td>
-              <td>
-                {song.downloaded ? (
-                  <RiCheckLine color="green" size={24} />
-                ) : (
-                  <FaDownload>
-                    <button onClick={() => handleDl(song)}></button>
-                  </FaDownload>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div>
+        <Table>
+          <TableCaption>A list of your recent invoices.</TableCaption>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Title</TableHead>
+              <TableHead>Artists</TableHead>
+              <TableHead>Album</TableHead>
+              <TableHead>Playlist</TableHead>
+              <TableHead>Platform</TableHead>
+              <TableHead className="text-right">Downloaded ?</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {songs.map((song) => (
+              <TableRow key={song.id}>
+                <TableCell className="font-medium">{song.title}</TableCell>
+                <TableCell>{song.artists}</TableCell>
+                <TableCell>{song.album}</TableCell>
+                <TableCell>{song.playlist}</TableCell>
+                <TableCell>{song.platform}</TableCell>
+                <TableCell
+                  className="flex items-end justify-end"
+                  onClick={() =>
+                    handleSubmitSong(
+                      song.title!,
+                      song.url,
+                      song.playlist!,
+                      song.artists
+                    )
+                  }
+                >
+                  {song.downloaded ? (
+                    <Check size={24} />
+                  ) : (
+                    <Download size={24} type="submit"></Download>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+          <TableFooter>
+            <TableRow>
+              <TableCell colSpan={5}>Not Downloaded</TableCell>
+              <TableCell className="text-right">TOTAL NOT DOWNLOADED</TableCell>
+            </TableRow>
+          </TableFooter>
+        </Table>
+      </div>
     </>
   );
 }

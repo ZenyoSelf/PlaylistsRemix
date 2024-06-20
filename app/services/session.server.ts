@@ -3,7 +3,7 @@ import { createCookieSessionStorage } from "@remix-run/node";
 
 export const sessionStorage = createCookieSessionStorage({
   cookie: {
-    name: "_session", // use any name you want here
+    name: "spotifySession", // use any name you want here
     sameSite: "lax",
     path: "/",
     httpOnly: true,

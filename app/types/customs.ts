@@ -7,6 +7,7 @@ export interface Song {
   album: string | null;
   playlist: string | null;
   platform: "Youtube" | "Spotify" | "Soundcloud";
+  url: string;
   downloaded: boolean | null;
 }
 

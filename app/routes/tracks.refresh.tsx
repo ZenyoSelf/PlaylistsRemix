@@ -12,9 +12,6 @@ export async function action({
 }: ActionFunctionArgs): Promise<TracksRefresh> {
   //Get newest addition, then add to db
   const songs = await populateSongsForUser(request);
-  console.log("all data ");
-  console.log(songs);
-
   return {
     songs: songs,
     toast: { message: "Successfully refreshed", type: "success" },
