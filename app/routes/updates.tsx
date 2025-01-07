@@ -2,10 +2,9 @@ import { ActionFunction, LoaderFunctionArgs, json } from "@remix-run/node";
 import { Form, useLoaderData, useSubmit } from "@remix-run/react";
 import { useRef, useState } from "react";
 import { Session } from "remix-auth-spotify";
-import { ToastMessage } from "remix-toast";
 import { spotifyStrategy } from "~/services/auth.server";
-import { getUserSongs } from "~/services/db.server";
-import { Song } from "~/types/customs";
+import { getUserSongsFromDB } from "~/services/db.server";
+import { Song, TracksRefresh } from "~/types/customs";
 import { FaSpotify } from "react-icons/fa";
 import {
   Table,
@@ -44,13 +43,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
   //Here handle all playlists and liked tracks
   //For now, only selected playlists
   const session = await spotifyStrategy.getSession(request);
-  console.log(session);
 
   if (!session) {
     return json<LoaderData>({ session: null, songs: [] });
   }
 
-  const userSongs = await getUserSongs(request);
+  const userSongs = await getUserSongsFromDB(request);
   return json<LoaderData>({ session, songs: userSongs });
 }
 
@@ -68,7 +66,6 @@ export const action: ActionFunction = async ({ request }) => {
     ).catch((reason) => {
       console.log(reason);
     });
-    console.log(result);
     return json({ success: true, result });
   } catch (error) {
     return json({ success: false, error });
@@ -78,6 +75,7 @@ export const action: ActionFunction = async ({ request }) => {
 export default function Updates() {
   const { session, songs: initialSongs } = useLoaderData<typeof loader>();
   const [songs, setSongs] = useState(initialSongs);
+  const [totalSongs, setTotalSongs] = useState(0)
   const submit = useSubmit();
   const loginFormRef = useRef<HTMLFormElement>(null);
   const handleLoginLogout = () => {
@@ -111,9 +109,13 @@ export default function Updates() {
         method: "POST",
       });
       if (response.ok) {
-        const data: { songs: Song[]; toast: ToastMessage } =
+        const data: TracksRefresh =
           await response.json();
         setSongs(data.songs);
+        console.log("handle refresh total");
+        console.log(data.total);
+        setTotalSongs(data.total);
+
       }
     }
   };
@@ -209,7 +211,7 @@ export default function Updates() {
           </TableBody>
           <TableFooter>
             <TableRow>
-              <TableCell colSpan={5}>Not Downloaded</TableCell>
+              <TableCell colSpan={5}>0 / {totalSongs}</TableCell>
               <TableCell className="text-right">TOTAL NOT DOWNLOADED</TableCell>
             </TableRow>
           </TableFooter>

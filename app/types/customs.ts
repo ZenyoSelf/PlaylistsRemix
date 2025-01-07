@@ -15,4 +15,5 @@ export interface Song {
 export interface TracksRefresh {
   songs: Song[];
   toast: ToastMessage;
+  total:number;
 }

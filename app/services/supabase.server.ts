@@ -33,7 +33,7 @@ export async function getLatestRefresh(email: string) {
   }
 }
 
-export async function getUserSongs(request: Request): Promise<Song[]> {
+export async function getUserSongsFromDB(request: Request): Promise<Song[]> {
   const session = await spotifyStrategy.getSession(request);
   if (!session) {
     throw new Error("No session established to spotify");
@@ -106,6 +106,6 @@ export async function populateSongsForUser(request: Request) {
     if (ErrorDateTimeZ != null)
       throw new Error("Error during updating new last_refresh");
   }
-  const userSongs = await getUserSongs(request);
+  const userSongs = await getUserSongsFromDB(request);
   return userSongs;
 }

@@ -4,6 +4,7 @@ import path from "path";
 import SpotifyApi from "spotify-web-api-node";
 import { convertSpotifyToYouTubeMusic } from "./spotToYt.server";
 import { Song } from "~/types/customs";
+import { spotifyStrategy } from "./auth.server";
 
 if (!process.env.SPOTIFY_CLIENT_ID) {
   throw new Error("Missing SPOTIFY_CLIENT_ID env");
@@ -56,7 +57,29 @@ export async function getLikedSongsSpotify(
   }
 }
 
+
+export async function getTotalLikedSongsSpotify(request: Request): Promise<number> {
+  const session = await spotifyStrategy.getSession(request);
+  if (!session) {
+    throw new Error("No session established to spotify");
+  }
+
+  return fetch(
+    `https://api.spotify.com/v1/me/tracks?limit=${0}&offset=${0}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${session?.accessToken}` },
+    }
+  ).then(async (r) => {
+    const data = (await r.json()) as SpotifyApi.UsersSavedTracksResponse;
+    return data.total
+  }
+  );
+
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
+/*
 export async function getPlaylistsTracksSpotify(
   offset: number,
   limit: number,
@@ -105,7 +128,7 @@ export async function getPlaylistsTracksSpotify(
     console.error("Error fetching liked songs:", error);
   }
 }
-
+*/
 export async function downloadSpotifySong(
   trackName: string,
   artists: string[],
