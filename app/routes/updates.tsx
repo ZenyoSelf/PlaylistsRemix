@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { Session } from "remix-auth-spotify";
 import { ToastMessage } from "remix-toast";
 import { spotifyStrategy } from "~/services/auth.server";
-import { getUserSongs } from "~/services/supabase.server";
+import { getUserSongs } from "~/services/db.server";
 import { Song } from "~/types/customs";
 import { FaSpotify } from "react-icons/fa";
 import {
@@ -27,6 +27,14 @@ import {
 
 import { Check, Download } from "lucide-react";
 import { downloadSpotifySong } from "~/services/selfApi.server";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "~/components/ui/card";
+import { Button } from "~/components/ui/button";
 interface LoaderData {
   session: Session | null;
   songs: Song[];
@@ -36,6 +44,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   //Here handle all playlists and liked tracks
   //For now, only selected playlists
   const session = await spotifyStrategy.getSession(request);
+  console.log(session);
 
   if (!session) {
     return json<LoaderData>({ session: null, songs: [] });
@@ -115,6 +124,20 @@ export default function Updates() {
         <h1>Newest addition</h1>
       </div>
       <div>
+        <Card className="w-[350px]">
+          <CardHeader>
+            <CardTitle>Resume</CardTitle>
+            <CardDescription>
+              Total news songs since last addition
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap">
+            <i>1/100</i>
+            <Button>Download All</Button>
+          </CardContent>
+        </Card>
+      </div>
+      <div>
         <Menubar>
           <MenubarMenu>
             <MenubarTrigger>Login</MenubarTrigger>
@@ -145,7 +168,7 @@ export default function Updates() {
       </div>
       <div>
         <Table>
-          <TableCaption>A list of your recent invoices.</TableCaption>
+          <TableCaption>A list of your recent added songs.</TableCaption>
           <TableHeader>
             <TableRow>
               <TableHead>Title</TableHead>

@@ -55,6 +55,7 @@ export async function getUserSongs(request: Request): Promise<Song[]> {
     platform: item.platform,
     url: item.url,
     downloaded: item.downloaded,
+    platform_added_at: item.platform_added_at,
   }));
 }
 

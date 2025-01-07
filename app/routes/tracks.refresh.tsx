@@ -1,8 +1,9 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 
-import { populateSongsForUser } from "~/services/supabase.server";
+import { populateSongsForUser } from "~/services/db.server";
 import { TracksRefresh } from "~/types/customs";
+
 export function loader() {
   return redirect("/updates");
 }

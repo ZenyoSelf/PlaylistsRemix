@@ -3,6 +3,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import SpotifyApi from "spotify-web-api-node";
 import { convertSpotifyToYouTubeMusic } from "./spotToYt.server";
+import { Song } from "~/types/customs";
 
 if (!process.env.SPOTIFY_CLIENT_ID) {
   throw new Error("Missing SPOTIFY_CLIENT_ID env");
@@ -43,8 +44,59 @@ export async function getLikedSongsSpotify(
           headers: { Authorization: `Bearer ${accessToken}` },
         }
       ).then(async (r) => await r.json());
+
     const data = await fetchLikedSongsTracks(limit, offset);
     console.log(data);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    likedSongs = likedSongs.concat(data.items); // Concatenate new songs to the existing list
+    offset += limit; // Increment offset for pagination
+    return data;
+  } catch (error) {
+    console.error("Error fetching liked songs:", error);
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function getPlaylistsTracksSpotify(
+  offset: number,
+  limit: number,
+  accessToken: string
+) {
+  let likedSongs: unknown[] = [];
+  const sunset = "4K3GtjtO0hGzoySqSvvdBZ";
+  const techdeeptech = "4ObXDAOjUuwcQbSebicdbk";
+  const ukbass = "33eO98MoQVMjgdFrxOX0Qp";
+  const th = "2Jr4dPvA1Tv2Hl6KJLFJI0";
+  const mh = "260FBKvDzblBBE702GtUfp";
+
+  const playlists = [];
+  playlists.push(sunset);
+  playlists.push(techdeeptech);
+  playlists.push(ukbass);
+  playlists.push(th);
+  playlists.push(mh);
+  try {
+    const fetchPlaylistTracks = (
+      playlistId: string
+    ): Promise<SpotifyApi.PlaylistObjectFull> =>
+      fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }).then(async (r) => await r.json());
+
+    //Add all received tracks to supabase, basicly
+    let allTracks: [] = [];
+    playlists.forEach((playlistId) => {
+      const data = fetchPlaylistTracks(playlistId);
+      data.then((v) => {
+        v.tracks.items.forEach((track) => {
+          allTracks.push({
+            id: track.track?.id,
+          });
+        });
+      });
+    });
+
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     likedSongs = likedSongs.concat(data.items); // Concatenate new songs to the existing list
     offset += limit; // Increment offset for pagination

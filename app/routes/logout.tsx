@@ -7,7 +7,7 @@ export async function action({ request }: ActionFunctionArgs) {
   return redirect("/", {
     headers: {
       "Set-Cookie": await destroySession(
-        await getSession(request.headers.get("cookie"))
+        await getSession(request.headers.get("spotifySession"))
       ),
     },
   });

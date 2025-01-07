@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 
-import { getUserSongs } from "~/services/supabase.server";
+import { getUserSongs } from "~/services/db.server";
 
 export function loader() {
   return redirect("/updates");
