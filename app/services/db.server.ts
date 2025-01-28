@@ -1,7 +1,7 @@
 import sqlite3 from 'sqlite3';
 import { open } from "sqlite";
 import { spotifyStrategy } from "./auth.server";
-import { getLikedSongsSpotify, getTotalLikedSongsSpotify } from "./selfApi.server";
+import { getLikedSongsSpotify } from "./selfApi.server";
 import { Song } from "~/types/customs";
 import path from "path";
 
@@ -74,7 +74,7 @@ export async function getLatestRefresh(email: string) {
     }
 }
 
-export async function getUserSongsFromDB(request: Request): Promise<Song[]> {
+export async function getUserSongsFromDB(request: Request,itemsNumber:number): Promise<Song[]> {
     const session = await spotifyStrategy.getSession(request);
     if (!session) {
         throw new Error("No session established to spotify");
@@ -82,9 +82,11 @@ export async function getUserSongsFromDB(request: Request): Promise<Song[]> {
 
     const db = await getDb();
     try {
+
         const songs = await db.all(
-            "SELECT * FROM song WHERE user = ?",
-            session.user!.email
+            "SELECT * FROM song WHERE user = ? ORDER BY platform_added_at DESC LIMIT ?",
+            session.user!.email,
+            itemsNumber
         );
 
         return songs.map((item) => ({
@@ -164,7 +166,6 @@ export async function populateSongsForUser(request: Request) {
         }
     }
 
-    const userSongs = await getUserSongsFromDB(request);
-
-    return userSongs;
+ 
+    return true;
 }
