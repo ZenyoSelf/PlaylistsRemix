@@ -1,5 +1,5 @@
-import { ActionFunction, json, LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSearchParams, Form } from "@remix-run/react";
+import {  json, LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useSearchParams, Form, Link } from "@remix-run/react";
 import { getUserSongsFromDB } from "~/services/db.server";
 import { Song } from "~/types/customs";
 import {
@@ -11,7 +11,6 @@ import {
   TableRow,
 } from "~/components/ui/table";
 
-import { downloadSpotifySong } from "~/services/selfApi.server";
 import {
   Card,
   CardContent,
@@ -21,10 +20,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
 import { DownloadIcon, RefreshCw } from "lucide-react";
-import fs from "fs/promises";
-import path from "path";
-import { createReadStream, readFileSync } from "fs";
-
 
 interface LoaderData {
   songs: Song[];
@@ -69,61 +64,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json(response);
 }
 
-export const action: ActionFunction = async ({ request }) => {
-  const formData = await request.formData();
-  const songName = formData.get("songName") as string;
-  const artists = formData.getAll("artist") as string[];
-  const playlistName = formData.get("playlistName") as string;
-
-  try {
-    const filePath = await downloadSpotifySong(songName, artists, playlistName);
-    console.log("File downloaded to:", filePath);
-
-    // Verify file exists and is accessible
-    const fileExists = await fs.access(filePath).then(() => true).catch(() => false);
-    if (!fileExists) {
-      throw new Error(`File not found at path: ${filePath}`);
-    }
-
-    const fileName = path.basename(filePath);
-    const stats = await fs.stat(filePath);
-    
-    // Read file synchronously
-    const fileContent = createReadStream(filePath);
-    console.log("File size:", stats.size, "bytes");
-
-    // Create response before deleting the file
-    const response = new Response(fileContent, {
-      status: 200,
-      headers: {
-        "Content-Type": "audio/flac",
-        "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`,
-        "Content-Length": stats.size.toString(),
-        "Access-Control-Expose-Headers": "Content-Disposition",
-        "Cache-Control": "no-store",
-      },
-    });
-
-    // Delete file after a short delay to ensure response is sent
-    setTimeout(async () => {
-      try {
-        await fs.unlink(filePath);
-        console.log("File deleted:", filePath);
-      } catch (err) {
-        console.error("Error deleting file:", err);
-      }
-    }, 1000);
-
-    return response;
-  } catch (error) {
-    console.error("Download error:", error);
-    return json({ 
-      success: false, 
-      error: String(error),
-      details: error instanceof Error ? error.stack : undefined 
-    }, { status: 500 });
-  }
-};
 
 export default function Updates() {
   const { songs, currentPage, totalPages } = useLoaderData<typeof loader>();
@@ -234,26 +174,9 @@ export default function Updates() {
                   <TableCell>{song.playlist}</TableCell>
                   <TableCell>{new Date(song.platform_added_at).toLocaleDateString()}</TableCell>
                   <TableCell>
-                    <Form method="post">
-                      <input type="hidden" name="songName" value={song.title || ""} />
-                      {song.artist_name?.map((artist: string, index: number) => (
-                        <input
-                          key={index}
-                          type="hidden"
-                          name="artist"
-                          value={artist}
-                        />
-                      ))}
-                      <input type="hidden" name="playlistName" value={song.playlist || ""} />
-                      <Button
-                        type="submit"
-                        variant="outline"
-                        size="sm"
-
-                      >
-                        <DownloadIcon className="h-4 w-4" />
-                      </Button>
-                    </Form>
+                    <Link reloadDocument to={`/download/${song.id}`}>
+                      <DownloadIcon className="h-4 w-4" />
+                    </Link>
                   </TableCell>
                 </TableRow>
               ))}

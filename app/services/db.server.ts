@@ -214,3 +214,8 @@ export async function populateSongsForUser(request: Request) {
  
     return true;
 }
+
+export async function getSongById(id: string) {
+  const db = await getDb();
+  return db.get("SELECT * FROM song WHERE id = ?", id);
+}
