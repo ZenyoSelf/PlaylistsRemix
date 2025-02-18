@@ -1,104 +1,72 @@
-import { ActionFunction, LoaderFunctionArgs, json } from "@remix-run/node";
-import { Form, useLoaderData, useSearchParams, useSubmit } from "@remix-run/react";
-import { useRef, useState } from "react";
-import { Session } from "remix-auth-spotify";
-import { spotifyStrategy } from "~/services/auth.server";
+import { ActionFunction, json, LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useSearchParams, Form } from "@remix-run/react";
 import { getUserSongsFromDB } from "~/services/db.server";
-import { Song, TracksRefresh } from "~/types/customs";
-import { FaSpotify } from "react-icons/fa";
+import { Song } from "~/types/customs";
 import {
   Table,
   TableBody,
-  TableCaption,
   TableCell,
-  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
-import {
-  Menubar,
-  MenubarContent,
-  MenubarItem,
-  MenubarMenu,
-  MenubarTrigger,
-} from "~/components/ui/menubar";
 
-import { Check, Download } from "lucide-react";
 import { downloadSpotifySong } from "~/services/selfApi.server";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "~/components/ui/card";
-import { Button } from "~/components/ui/button";
-import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationLink, PaginationEllipsis, PaginationNext } from "~/components/ui/pagination";
+import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationLink, PaginationNext } from "~/components/ui/pagination";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "~/components/ui/input";
+import { Button } from "~/components/ui/button";
+import { DownloadIcon, RefreshCw } from "lucide-react";
+import fs from "fs/promises";
+import path from "path";
+import { createReadStream, readFileSync } from "fs";
 
 
 interface LoaderData {
-  session: Session | null;
   songs: Song[];
-  page: number;
-  itemsPerPage: number;
+  currentPage: number;
+  totalPages: number;
   platforms: string[];
   playlists: string[];
 }
 
-const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  //Here handle all playlists and liked tracks
-  //For now, only selected playlists
-
   const url = new URL(request.url);
-  const page = Number(url.searchParams.get("page")) || 1;
-  const itemsPerPage = Number(url.searchParams.get("itemsPerPage")) || 10;
-  const platform = url.searchParams.get("platform") || "all";
-  const playlist = url.searchParams.get("playlist") || "all";
-  const session = await spotifyStrategy.getSession(request);
+  const page = parseInt(url.searchParams.get("page") || "1");
+  const itemsPerPage = parseInt(url.searchParams.get("itemsPerPage") || "20");
+  const search = url.searchParams.get("search") || "";
+  const platform = url.searchParams.get("platform") || "";
+  const playlist = url.searchParams.get("playlist") || "";
+  const sortBy = url.searchParams.get("sortBy") || "platform_added_at";
+  const sortDirection = url.searchParams.get("sortDirection") || "desc";
 
-  if (!session) {
-    return json<LoaderData>({
-      session: null,
-      songs: [],
-      page,
-      itemsPerPage,
-      platforms: [], // Available platforms
-      playlists: [], // Available playlists
-    });
-  }
-
-  //TODO: Filtering
-  const userSongs = await getUserSongsFromDB(request, PAGE_SIZE_OPTIONS[0]);
-
-  // Get unique platforms and playlists for filters
-  const platforms = Array.from(new Set(userSongs.map(song => song.platform)));
-
-  const playlists = Array.from(
-    new Set(userSongs.map(song => song.playlist).filter((playlist): playlist is string => playlist !== null))
-  );
-
-  // TODO: when filtering done, this isn't needed
-  let filteredSongs = userSongs;
-  if (platform !== "all") {
-    filteredSongs = filteredSongs.filter(song => song.platform === platform);
-  }
-  if (playlist !== "all") {
-    filteredSongs = filteredSongs.filter(song => song.playlist === playlist);
-  }
-
-  return json<LoaderData>({
-    session,
-    songs: filteredSongs,
+  const { songs, currentPage, totalPages } = await getUserSongsFromDB(request, {
     page,
     itemsPerPage,
-    platforms,
-    playlists,
+    search,
+    platform,
+    playlist,
+    sortBy,
+    sortDirection: sortDirection as "desc" | "asc"
   });
+
+  const platforms = [...new Set(songs.map(song => song.platform))];
+  const playlists = [...new Set(songs.map(song => song.playlist))].filter(Boolean);
+
+  const response: LoaderData = {
+    songs,
+    currentPage,
+    totalPages,
+    platforms,
+    playlists
+  };
+
+  return json(response);
 }
 
 export const action: ActionFunction = async ({ request }) => {
@@ -108,339 +76,228 @@ export const action: ActionFunction = async ({ request }) => {
   const playlistName = formData.get("playlistName") as string;
 
   try {
-    const result = await downloadSpotifySong(
-      songName,
-      artists,
-      playlistName
-    ).catch((reason) => {
-      console.log(reason);
+    const filePath = await downloadSpotifySong(songName, artists, playlistName);
+    console.log("File downloaded to:", filePath);
+
+    // Verify file exists and is accessible
+    const fileExists = await fs.access(filePath).then(() => true).catch(() => false);
+    if (!fileExists) {
+      throw new Error(`File not found at path: ${filePath}`);
+    }
+
+    const fileName = path.basename(filePath);
+    const stats = await fs.stat(filePath);
+    
+    // Read file synchronously
+    const fileContent = createReadStream(filePath);
+    console.log("File size:", stats.size, "bytes");
+
+    // Create response before deleting the file
+    const response = new Response(fileContent, {
+      status: 200,
+      headers: {
+        "Content-Type": "audio/flac",
+        "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`,
+        "Content-Length": stats.size.toString(),
+        "Access-Control-Expose-Headers": "Content-Disposition",
+        "Cache-Control": "no-store",
+      },
     });
-    return json({ success: true, result });
+
+    // Delete file after a short delay to ensure response is sent
+    setTimeout(async () => {
+      try {
+        await fs.unlink(filePath);
+        console.log("File deleted:", filePath);
+      } catch (err) {
+        console.error("Error deleting file:", err);
+      }
+    }, 1000);
+
+    return response;
   } catch (error) {
-    return json({ success: false, error });
+    console.error("Download error:", error);
+    return json({ 
+      success: false, 
+      error: String(error),
+      details: error instanceof Error ? error.stack : undefined 
+    }, { status: 500 });
   }
 };
 
 export default function Updates() {
-  const { session,
-    songs: initialSongs,
-    platforms,
-    playlists, } = useLoaderData<typeof loader>();
-  const [songs, setSongs] = useState(initialSongs);
-  const [totalSongs, setTotalSongs] = useState(0)
+  const { songs, currentPage, totalPages } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [currentPage, setCurrentPage] = useState(Number(searchParams.get("page")) || 1);
-  const [itemsPerPage, setItemsPerPage] = useState(Number(searchParams.get("itemsPerPage")) || 10);
-  const currentPlatform = searchParams.get("platform") || "all";
-  const currentPlaylist = searchParams.get("playlist") || "all";
-  const totalPages = Math.ceil(totalSongs / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const currentSongs = songs.slice(startIndex, endIndex);
 
-  const handleFilterChange = (type: "platform" | "playlist" | "itemsPerPage", value: string) => {
-    const newParams = new URLSearchParams(searchParams);
-    newParams.set(type, value);
-    newParams.set("page", "1"); // Reset to first page when filtering
-    setSearchParams(newParams, {
-      preventScrollReset: true
-    })
-    submit(newParams);
+  // Handle search input
+  const handleSearch = (value: string) => {
+    setSearchParams(prev => {
+      prev.set("search", value);
+      prev.set("page", "1"); // Reset to first page on new search
+      return prev;
+    });
   };
 
-  const submit = useSubmit();
-  const loginFormRef = useRef<HTMLFormElement>(null);
-  const handleLoginLogout = () => {
-    if (loginFormRef.current) {
-      loginFormRef.current.submit();
-    }
+  // Handle pagination
+  const handlePageChange = (newPage: number) => {
+    setSearchParams(prev => {
+      prev.set("page", newPage.toString());
+      return prev;
+    });
   };
-
-  const handleSubmitSong = (
-    songName: string,
-    songUrl: string,
-    playlistName: string,
-    artists: string[] | null
-  ) => {
-    const formData = new FormData();
-    formData.append("songName", songName.toString());
-    formData.append("songUrl", songUrl.toString());
-    formData.append("playlistName", playlistName.toString());
-    if (artists) {
-      artists.forEach((artist) => {
-        formData.append("artist", artist);
-      });
-    }
-
-    submit(formData, { method: "post", action: "/updates" });
-  };
-
-  const handleRefresh = async () => {
-    if (session) {
-      const response = await fetch("/tracks/refresh", {
-        method: "POST",
-      });
-      if (response.ok) {
-        const data: TracksRefresh =
-          await response.json();
-        setSongs(data.songs);
-        console.log("handle refresh total");
-        console.log(data.total);
-        setTotalSongs(data.total);
-
-      }
-    }
-  };
-
-
-  const handleSearchSong = (song) => {
-    console.log(song);
-  }
-
-
-  // Handle page changes
-  const handlePageChange = (page) => {
-    setCurrentPage(page);
-  };
-
-  // Handle items per page change
-  const handleItemsPerPageChange = (value) => {
-    setItemsPerPage(Number(value));
-    setCurrentPage(1); // Reset to first page when changing items per page
-  };
-
-  // Calculate downloaded songs count
-  const downloadedCount = songs.filter(song => song.downloaded).length;
 
   return (
-    <>
-      <div style={{ fontFamily: "system-ui, sans-serif", lineHeight: "1.8" }}>
-        <h1>Newest addition</h1>
-      </div>
-
-
-      {/* Summary card */}
-      <Card className="w-[350px] mb-6">
-        <CardHeader>
-          <CardTitle>Summary</CardTitle>
-          <CardDescription>
-            {currentPlatform === "all" ? "All platforms" : currentPlatform} •
-            {currentPlaylist === "all" ? "All playlists" : currentPlaylist}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex justify-between items-center">
-          <div>
-            <div className="text-sm text-gray-500">Downloaded</div>
-            <div className="text-2xl font-bold">{downloadedCount} / {totalSongs}</div>
+    <div className="space-y-4">
+      {/* Refresh Card */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-medium">Database Sync</h3>
+              <p className="text-sm text-muted-foreground">Refresh your songs from Spotify</p>
+            </div>
+            <Form action="/tracks/refresh" method="post">
+              <Button type="submit" variant="outline">
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Sync Library
+              </Button>
+            </Form>
           </div>
-          <Button
-            onClick={() => {/* Handle bulk download */ }}
-            disabled={downloadedCount === totalSongs}
-          >
-            Download All
-          </Button>
         </CardContent>
       </Card>
-      <div>
-        <Menubar>
-          <MenubarMenu>
-            <MenubarTrigger>Login</MenubarTrigger>
-            <MenubarContent>
-              <Form
-                ref={loginFormRef}
-                action={session?.user ? "/logout" : "/auth/spotify"}
-                method="post"
-              >
-                <MenubarItem inset onClick={handleLoginLogout}>
-                  <div className="flex flex-nowrap">
-                    <p className="flex-auto">
-                      {session?.user ? "Logout" : "Log in"}
-                    </p>
-                    <FaSpotify className="flex-auto ml-2" size={24} />
-                  </div>
-                </MenubarItem>
-              </Form>
-            </MenubarContent>
-          </MenubarMenu>
-          <MenubarMenu>
-            <MenubarTrigger>Refresh</MenubarTrigger>
-            <MenubarContent>
-              <MenubarItem onClick={handleRefresh}>Refresh All</MenubarItem>
-            </MenubarContent>
-          </MenubarMenu>
-        </Menubar>
-      </div>
-      {/* Add filter controls */}
-      <div className="flex gap-4 mb-6">
-        {/* Platform filter */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-500">Platform:</span>
-          <Select
-            value={currentPlatform}
-            onValueChange={(value) => handleFilterChange("platform", value)}
-          >
-            <SelectTrigger className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Platforms</SelectItem>
-              {platforms.map((platform) => (
-                <SelectItem key={platform} value={platform}>
-                  {platform}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
 
-        {/* Playlist filter */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-500">Playlist:</span>
-          <Select
-            value={currentPlaylist}
-            onValueChange={(value) => handleFilterChange("playlist", value)}
-          >
-            <SelectTrigger className="w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Playlists</SelectItem>
-              {playlists.map((playlist) => (
-                <SelectItem key={playlist} value={playlist}>
-                  {playlist}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      {/* Search and Filters */}
+      <Card>
+        <CardContent className="p-4 space-y-4">
+          <div className="flex gap-4">
+            <Input
+              placeholder="Search songs..."
+              value={searchParams.get("search") || ""}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="max-w-sm"
+            />
+            <Select
+              value={searchParams.get("platform") || "all"}
+              onValueChange={(value) => {
+                setSearchParams(prev => {
+                  prev.set("platform", value === "all" ? "" : value);
+                  prev.set("page", "1");
+                  return prev;
+                });
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Platform" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Platforms</SelectItem>
+                <SelectItem value="Spotify">Spotify</SelectItem>
+                <SelectItem value="Youtube">Youtube</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
 
-
-      </div>
-      <div>
-        <Input
-          placeholder="Search for song..."
-          onChange={(event) =>
-            handleSearchSong(event.target.value)
-          }
-          className="max-w-sm"
-        />
-      </div>
-      <div>
-        <Table>
-          <TableCaption>A list of your recent added songs.</TableCaption>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Title</TableHead>
-              <TableHead>Artists</TableHead>
-              <TableHead>Album</TableHead>
-              <TableHead>Playlist</TableHead>
-              <TableHead>Platform</TableHead>
-              <TableHead className="text-right">Downloaded ?</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {songs.map((song) => (
-              <TableRow key={song.id}>
-                <TableCell className="font-medium">{song.title}</TableCell>
-                <TableCell>{song.artists}</TableCell>
-                <TableCell>{song.album}</TableCell>
-                <TableCell>{song.playlist}</TableCell>
-                <TableCell>{song.platform}</TableCell>
-                <TableCell
-                  className="flex items-end justify-end"
-                  onClick={() =>
-                    handleSubmitSong(
-                      song.title!,
-                      song.url,
-                      song.playlist!,
-                      song.artists
-                    )
-                  }
-                >
-                  {song.downloaded ? (
-                    <Check size={24} />
-                  ) : (
-                    <Download size={24} type="submit"></Download>
-                  )}
-                </TableCell>
+      {/* Songs Table */}
+      <Card>
+        <CardContent className="p-4">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Image</TableHead>
+                <TableHead>Title</TableHead>
+                <TableHead>Artist</TableHead>
+                <TableHead>Platform</TableHead>
+                <TableHead>Playlist</TableHead>
+                <TableHead>Added At</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-          <TableFooter>
-            <TableRow>
-              {/* Items per page selector */}
-              <TableCell colSpan={10}>
-                <Pagination>
-                  <PaginationContent>
-                    <PaginationItem>
-                      <PaginationPrevious
-                        onClick={() => handlePageChange(currentPage - 1)}
-                        className={currentPage === 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+            </TableHeader>
+            <TableBody>
+              {songs.map((song) => (
+                <TableRow key={song.id}>
+                  <TableCell>
+                    {song.album_image && (
+                      <img
+                        src={song.album_image}
+                        alt={`${song.album} cover`}
+                        className="w-16 h-16 rounded-sm object-cover"
                       />
-                    </PaginationItem>
+                    )}
+                  </TableCell>
+                  <TableCell>{song.title}</TableCell>
+                  <TableCell>
+                    {song.artist_name?.join(", ") || ""}
+                  </TableCell>
+                  <TableCell>{song.platform}</TableCell>
+                  <TableCell>{song.playlist}</TableCell>
+                  <TableCell>{new Date(song.platform_added_at).toLocaleDateString()}</TableCell>
+                  <TableCell>
+                    <Form method="post">
+                      <input type="hidden" name="songName" value={song.title || ""} />
+                      {song.artist_name?.map((artist: string, index: number) => (
+                        <input
+                          key={index}
+                          type="hidden"
+                          name="artist"
+                          value={artist}
+                        />
+                      ))}
+                      <input type="hidden" name="playlistName" value={song.playlist || ""} />
+                      <Button
+                        type="submit"
+                        variant="outline"
+                        size="sm"
 
-                    {[...Array(totalPages)].map((_, index) => {
-                      const pageNumber = index + 1;
-                      // Show first page, current page, last page and neighbors
-                      if (
-                        pageNumber === 1 ||
-                        pageNumber === totalPages ||
-                        (pageNumber >= currentPage - 1 && pageNumber <= currentPage + 1)
-                      ) {
-                        return (
-                          <PaginationItem key={pageNumber}>
-                            <PaginationLink
-                              onClick={() => handlePageChange(pageNumber)}
-                              isActive={currentPage === pageNumber}
-                            >
-                              {pageNumber}
-                            </PaginationLink>
-                          </PaginationItem>
-                        );
-                      } else if (
-                        (pageNumber === currentPage - 2 && currentPage > 3) ||
-                        (pageNumber === currentPage + 2 && currentPage < totalPages - 2)
-                      ) {
-                        return (
-                          <PaginationItem key={pageNumber}>
-                            <PaginationEllipsis />
-                          </PaginationItem>
-                        );
-                      }
-                      return null;
-                    })}
+                      >
+                        <DownloadIcon className="h-4 w-4" />
+                      </Button>
+                    </Form>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
-                    <PaginationItem>
-                      <PaginationNext
-                        onClick={() => handlePageChange(currentPage + 1)}
-                        className={currentPage === totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
-                      />
-                    </PaginationItem>
-                  </PaginationContent>
-                </Pagination>
-                <Select
-                  value={itemsPerPage.toString()}
-                  onValueChange={handleItemsPerPageChange}
-                >
-                  <SelectTrigger className="w-24">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PAGE_SIZE_OPTIONS.map((size) => (
-                      <SelectItem key={size} value={size.toString()}>
-                        {size}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+      {/* Pagination */}
+      <Pagination className="mt-4">
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              onClick={(e) => {
+                if (currentPage === 1) e.preventDefault();
+                else handlePageChange(currentPage - 1);
+              }}
+              aria-disabled={currentPage === 1}
+            />
+          </PaginationItem>
 
-              </TableCell>
-            </TableRow>
-          </TableFooter>
-        </Table>
+          {/* Add page numbers here */}
+          {Array.from({ length: Math.min(5, totalPages) }, (_, i) => (
+            <PaginationItem key={i}>
+              <PaginationLink
+                onClick={() => handlePageChange(i + 1)}
+                isActive={currentPage === i + 1}
+              >
+                {i + 1}
+              </PaginationLink>
+            </PaginationItem>
+          ))}
 
-
-      </div >
-    </>
+          <PaginationItem>
+            <PaginationNext
+              onClick={(e) => {
+                if (currentPage === totalPages) e.preventDefault();
+                else handlePageChange(currentPage + 1);
+              }}
+              aria-disabled={currentPage === totalPages}
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </div>
   );
 }

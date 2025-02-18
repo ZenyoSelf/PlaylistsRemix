@@ -1,10 +1,11 @@
 import { execFile } from "child_process";
 import { fileURLToPath } from "url";
 import path from "path";
-import SpotifyApi from "spotify-web-api-node";
 import { convertSpotifyToYouTubeMusic } from "./spotToYt.server";
-import { Song } from "~/types/customs";
 import { spotifyStrategy } from "./auth.server";
+import fs from "fs/promises";
+import archiver from "archiver";
+import { Stream } from "stream";
 
 if (!process.env.SPOTIFY_CLIENT_ID) {
   throw new Error("Missing SPOTIFY_CLIENT_ID env");
@@ -24,6 +25,8 @@ const __dirname = path.dirname(__filename);
 
 // Construct the path to the yt-dlp.exe executable
 const ytDlpPath = path.resolve(__dirname, "../utils/yt-dlp.exe");
+const ffmpegPath = path.resolve(__dirname, "../utils/ffmpeg.exe");
+const ffprobePath = path.resolve(__dirname, "../utils/ffprobe.exe");
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function getLikedSongsSpotify(
@@ -78,89 +81,89 @@ export async function getTotalLikedSongsSpotify(request: Request): Promise<numbe
 
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-/*
-export async function getPlaylistsTracksSpotify(
-  offset: number,
-  limit: number,
-  accessToken: string
-) {
-  let likedSongs: unknown[] = [];
-  const sunset = "4K3GtjtO0hGzoySqSvvdBZ";
-  const techdeeptech = "4ObXDAOjUuwcQbSebicdbk";
-  const ukbass = "33eO98MoQVMjgdFrxOX0Qp";
-  const th = "2Jr4dPvA1Tv2Hl6KJLFJI0";
-  const mh = "260FBKvDzblBBE702GtUfp";
 
-  const playlists = [];
-  playlists.push(sunset);
-  playlists.push(techdeeptech);
-  playlists.push(ukbass);
-  playlists.push(th);
-  playlists.push(mh);
-  try {
-    const fetchPlaylistTracks = (
-      playlistId: string
-    ): Promise<SpotifyApi.PlaylistObjectFull> =>
-      fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${accessToken}` },
-      }).then(async (r) => await r.json());
-
-    //Add all received tracks to supabase, basicly
-    let allTracks: [] = [];
-    playlists.forEach((playlistId) => {
-      const data = fetchPlaylistTracks(playlistId);
-      data.then((v) => {
-        v.tracks.items.forEach((track) => {
-          allTracks.push({
-            id: track.track?.id,
-          });
-        });
-      });
-    });
-
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    likedSongs = likedSongs.concat(data.items); // Concatenate new songs to the existing list
-    offset += limit; // Increment offset for pagination
-    return data;
-  } catch (error) {
-    console.error("Error fetching liked songs:", error);
-  }
-}
-*/
 export async function downloadSpotifySong(
   trackName: string,
   artists: string[],
   playlistName: string
-) {
-  console.log("starting dl..");
-  const song = await convertSpotifyToYouTubeMusic(trackName, artists);
+): Promise<string> {
+  try {
+    const song = await convertSpotifyToYouTubeMusic(trackName, artists);
+    
+    if (!song) {
+      throw new Error(`Could not find YouTube video for: ${trackName} by ${artists.join(", ")}`);
+    }
 
-  if (song != null) {
-    return new Promise((resolve, reject) => {
+    const outputDir = path.join(process.cwd(), "tmp", playlistName);
+    await fs.mkdir(outputDir, { recursive: true });
+
+    // Create filename template with artist and title
+    const filename = `${artists.join(", ")} - ${trackName}`;
+
+    await new Promise((resolve, reject) => {
       execFile(
         ytDlpPath,
         [
           song.toString(),
+          "-f", "bestaudio",
           "-x",
-          "--audio-format",
-          "flac",
-          "--parse-metadata",
-          "title:%(artist)s - %(title)s",
-          "-o",
-          "public/" + playlistName + "/%(artist)s - %(title)s.%(ext)s",
+          "--audio-format", "flac",
+          "--audio-quality", "0",
+          "--add-metadata",
+          "--embed-thumbnail",
+          "-o", `"${outputDir}/${filename}.%(ext)s"`,  // Use our custom filename
+          "--ffmpeg-location", `"${path.dirname(ffmpegPath)}"`,
+          "--no-mtime",
         ],
+        {
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+          shell: true
+        },
         (error, stdout, stderr) => {
-          if (error) {
-            reject(`Error: ${error.message}`);
-          } else if (stderr) {
-            reject(`Stderr: ${stderr}`);
-          } else {
-            resolve(stdout);
-          }
+          if (error) reject(error);
+          else resolve(stdout);
         }
       );
     });
+
+    // Wait a moment for the file to be fully written THIS SHIT NEEDS TO BE FIXED
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Get the downloaded file path
+    const files = await fs.readdir(outputDir);
+    if (files.length === 0) throw new Error("No file was downloaded");
+    
+    // Find our specific file
+    const downloadedFile = files.find(file => file.startsWith(filename));
+    if (!downloadedFile) throw new Error("Could not find downloaded file");
+    
+    return path.join(outputDir, downloadedFile);
+
+  } catch (error) {
+    console.error("Download process error:", error);
+    throw error;
+  }
+}
+
+export async function downloadMultipleSongs(
+  songs: { trackName: string; artists: string[] }[],
+  playlistName: string
+): Promise<string[]> {
+  try {
+    const downloadedFiles: string[] = [];
+
+    for (const song of songs) {
+      const filePath = await downloadSpotifySong(
+        song.trackName,
+        song.artists,
+        playlistName
+      );
+      downloadedFiles.push(filePath);
+    }
+
+    return downloadedFiles;
+  } catch (error) {
+    console.error("Multiple download error:", error);
+    throw error;
   }
 }

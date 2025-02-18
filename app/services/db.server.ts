@@ -2,7 +2,7 @@ import sqlite3 from 'sqlite3';
 import { open } from "sqlite";
 import { spotifyStrategy } from "./auth.server";
 import { getLikedSongsSpotify } from "./selfApi.server";
-import { Song } from "~/types/customs";
+
 import path from "path";
 
 // Initialize database connection
@@ -28,6 +28,7 @@ async function initDb() {
       title TEXT,
       artist_name TEXT,
       album TEXT,
+      album_image TEXT,
       playlist TEXT,
       platform TEXT,
       url TEXT,
@@ -74,36 +75,79 @@ export async function getLatestRefresh(email: string) {
     }
 }
 
-export async function getUserSongsFromDB(request: Request,itemsNumber:number): Promise<Song[]> {
-    const session = await spotifyStrategy.getSession(request);
-    if (!session) {
-        throw new Error("No session established to spotify");
-    }
+export async function getUserSongsFromDB(
+  request: Request,
+  options: {
+    page?: number;
+    itemsPerPage?: number;
+    search?: string;
+    platform?: string;
+    playlist?: string;
+    sortBy?: string;
+    sortDirection?: 'asc' | 'desc';
+  } = {}
+) {
+  const db = await getDb();
+  const session = await spotifyStrategy.getSession(request);
+  
+  const {
+    page = 1,
+    itemsPerPage = 20,
+    search = '',
+    platform = '',
+    playlist = '',
+    sortBy = 'platform_added_at',
+    sortDirection = 'desc'
+  } = options;
 
-    const db = await getDb();
-    try {
+  const offset = (page - 1) * itemsPerPage;
 
-        const songs = await db.all(
-            "SELECT * FROM song WHERE user = ? ORDER BY platform_added_at DESC LIMIT ?",
-            session.user!.email,
-            itemsNumber
-        );
+  // Build the WHERE clause dynamically
+  const whereConditions = ['user = ?'];
+  const params: any[] = [session?.user?.email];
 
-        return songs.map((item) => ({
-            id: item.id,
-            title: item.title,
-            artists: JSON.parse(item.artist_name), // Store as JSON string in SQLite
-            album: item.album,
-            playlist: item.playlist,
-            platform: item.platform,
-            url: item.url,
-            downloaded: Boolean(item.downloaded), // SQLite stores as 0/1
-            platform_added_at: item.platform_added_at,
-        }));
-    } catch (error) {
-        console.error("Error fetching songs from SQLite:", error);
-        return [];
-    }
+  if (search) {
+    whereConditions.push('(title LIKE ? OR artist_name LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`);
+  }
+
+  if (platform) {
+    whereConditions.push('platform = ?');
+    params.push(platform);
+  }
+
+  if (playlist) {
+    whereConditions.push('playlist = ?');
+    params.push(playlist);
+  }
+
+  // Get total count for pagination
+  const countResult = await db.get(
+    `SELECT COUNT(*) as total FROM song WHERE ${whereConditions.join(' AND ')}`,
+    params
+  );
+
+  // Get paginated results
+  const songs = await db.all(
+    `SELECT * FROM song 
+     WHERE ${whereConditions.join(' AND ')}
+     ORDER BY ${sortBy} ${sortDirection}
+     LIMIT ? OFFSET ?`,
+    [...params, itemsPerPage, offset]
+  );
+
+  // Parse the artist_name JSON string into an array
+  const parsedSongs = songs.map(song => ({
+    ...song,
+    artist_name: JSON.parse(song.artist_name)
+  }));
+
+  return {
+    songs: parsedSongs,
+    total: countResult.total,
+    currentPage: page,
+    totalPages: Math.ceil(countResult.total / itemsPerPage)
+  };
 }
 
 
@@ -115,7 +159,7 @@ export async function populateSongsForUser(request: Request) {
     }
 
     const db = await getDb();
-    const likedsongs = await getLikedSongsSpotify(0, 20, session?.accessToken);
+    const likedsongs = await getLikedSongsSpotify(0, 50, session?.accessToken);
     console.log(session.user!.email)
     const latestRefresh = await getLatestRefresh(session.user!.email);
 
@@ -133,13 +177,14 @@ export async function populateSongsForUser(request: Request) {
 
                 await db.run(
                     `INSERT INTO song 
-          (artist_name, downloaded, title, album, user, playlist, platform, url, platform_added_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (artist_name, downloaded, title, album, album_image, user, playlist, platform, url, platform_added_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         artist_name,
-                        0, // false for downloaded
+                        0,
                         item.track.name,
                         item.track.album.name,
+                        item.track.album.images[0]?.url || '',
                         session.user?.email,
                         "SpotifyLikedSongs",
                         "Spotify",

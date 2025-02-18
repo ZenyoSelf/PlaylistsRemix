@@ -1,29 +1,48 @@
-import { searchMusics } from "node-youtube-music";
+import { execFile } from "child_process";
+import path from "path";
+import { fileURLToPath } from "url";
+
+// Construct __dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const ytDlpPath = path.resolve(__dirname, "../utils/yt-dlp.exe");
 
 export async function convertSpotifyToYouTubeMusic(
   trackName: string,
   trackArtists: string[]
-) {
+): Promise<string> {
   try {
-    // Search for equivalent track on YouTube Music
-    const searchQuery = `${trackName} ${trackArtists
-      .map((artist) => artist)
-      .join(" ")}`;
-    console.log("Query : " + searchQuery);
+    const searchQuery = `${trackName} ${trackArtists.join(" ")}`;
+    
+    // Use yt-dlp to search YouTube Music and get video ID
+    const videoId = await new Promise<string>((resolve, reject) => {
+      execFile(
+        ytDlpPath,
+        [
+          `ytsearch1:${searchQuery}`,  // Get first result only
+          "--no-playlist",
+          "--get-id",   // Get only the video ID
+          "--no-warnings",
+          "--extractor-args", "youtube:player_client=android"
+        ],
+        (error, stdout, stderr) => {
+          if (error) reject(error);
+          else resolve(stdout.trim());
+        }
+      );
+    });
 
-    const ytSearchResults = await searchMusics(searchQuery);
-    console.log("results : " + ytSearchResults.toString());
-    if (ytSearchResults.length === 0) {
-      throw new Error("Track not found on YouTube Music");
+    if (!videoId) {
+      throw new Error(`No results found for: ${searchQuery}`);
     }
 
-    // Assume taking the first search result
-    const firstResult = ytSearchResults[0];
-    const ytMusicUrl = `https://music.youtube.com/watch?v=${firstResult.youtubeId}`;
+    const ytMusicUrl = `https://music.youtube.com/watch?v=${videoId}`;
+    console.log("Found YouTube Music URL:", ytMusicUrl);
 
     return ytMusicUrl;
   } catch (error) {
-    console.error("Error converting Spotify URL to YouTube Music:", error);
+    console.error("Error searching with yt-dlp:", error);
     throw error;
   }
 }

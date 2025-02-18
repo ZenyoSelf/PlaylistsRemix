@@ -3,7 +3,8 @@ import { ToastMessage } from "remix-toast";
 export interface Song {
   id: number;
   title: string | null;
-  artists: string[] | null;
+  artist_name: string[] | null;
+  album_image: string | null;
   album: string | null;
   playlist: string | null;
   platform: "Youtube" | "Spotify" | "Soundcloud";
