@@ -1,5 +1,5 @@
-import {  json, LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSearchParams, Form, Link } from "@remix-run/react";
+import { json, LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useSearchParams, Form, Link, useNavigate } from "@remix-run/react";
 import { getUserSongsFromDB } from "~/services/db.server";
 import { Song } from "~/types/customs";
 import {
@@ -20,6 +20,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
 import { DownloadIcon, RefreshCw } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+
 
 interface LoaderData {
   songs: Song[];
@@ -68,6 +70,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export default function Updates() {
   const { songs, currentPage, totalPages } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { toast } = useToast();
+  const navigate = useNavigate();
 
   // Handle search input
   const handleSearch = (value: string) => {
@@ -85,6 +89,7 @@ export default function Updates() {
       return prev;
     });
   };
+
 
   return (
     <div className="space-y-4">
@@ -174,8 +179,8 @@ export default function Updates() {
                   <TableCell>{song.playlist}</TableCell>
                   <TableCell>{new Date(song.platform_added_at).toLocaleDateString()}</TableCell>
                   <TableCell>
-                    <Link reloadDocument to={`/download/${song.id}`}>
-                      <DownloadIcon className="h-4 w-4" />
+                    <Link reloadDocument to={`/download/${song.id}`} >
+                    <DownloadIcon className="h-4 w-4" />
                     </Link>
                   </TableCell>
                 </TableRow>

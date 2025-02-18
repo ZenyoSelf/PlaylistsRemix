@@ -1,53 +1,90 @@
-import { createReadableStreamFromReadable, LoaderFunction } from "@remix-run/node";
+import { json, LoaderFunction } from "@remix-run/node";
 import { createReadStream } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { downloadSpotifySong } from "~/services/selfApi.server";
 import { getSongById } from "~/services/db.server";
 
+type ToastData = {
+  title: string;
+  description: string;
+  variant: "default" | "destructive";
+};
+
 export const loader: LoaderFunction = async ({ params }) => {
   try {
     const songId = params.id;
-    if (!songId) throw new Error("Song ID is required");
+    if (!songId) {
+      return json({ 
+        toast: {
+          title: "Error",
+          description: "Song ID is required",
+          variant: "destructive"
+        } as ToastData
+      }, { status: 400 });
+    }
 
-    // Get song details from DB
     const song = await getSongById(songId);
-    if (!song) throw new Error("Song not found");
+    if (!song) {
+      return json({ 
+        toast: {
+          title: "Error",
+          description: "Song not found",
+          variant: "destructive"
+        } as ToastData
+      }, { status: 404 });
+    }
 
-    // Download the song
     const filePath = await downloadSpotifySong(
       song.title,
-      JSON.parse(song.artist_name), // Parse the JSON string to array
+      JSON.parse(song.artist_name),
       song.playlist
     );
 
-    // Verify file exists
     const fileExists = await fs.access(filePath).then(() => true).catch(() => false);
     if (!fileExists) {
-      throw new Error(`File not found at path: ${filePath}`);
+      return json({ 
+        toast: {
+          title: "Download Failed",
+          description: "File not found after download",
+          variant: "destructive"
+        } as ToastData
+      }, { status: 404 });
     }
 
     const fileName = path.basename(filePath);
     const stats = await fs.stat(filePath);
-
-    // Create readable stream
+    
     const fileStream = createReadStream(filePath);
-    const readableStream = createReadableStreamFromReadable(fileStream);
 
-    // Clean up file after stream ends
     fileStream.on('end', () => {
       fs.unlink(filePath).catch(console.error);
     });
 
-    return new Response(readableStream, {
+    return json({ 
+      toast: {
+        title: "Success",
+        description: `Downloaded ${fileName}`,
+        variant: "default"
+      } as ToastData,
+      downloadPath: filePath
+    }, {
+      status: 200,
       headers: {
         "Content-Type": "audio/flac",
         "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`,
         "Content-Length": stats.size.toString(),
+        "X-Download-Status": "success",
+        "X-Download-Filename": fileName
       },
     });
   } catch (error) {
-    console.error("Download error:", error);
-    throw error;
+    return json({ 
+      toast: {
+        title: "Download Failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive"
+      } as ToastData
+    }, { status: 500 });
   }
 }; 
