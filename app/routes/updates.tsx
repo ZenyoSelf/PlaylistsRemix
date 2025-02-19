@@ -1,5 +1,5 @@
 import { json, LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSearchParams, Form, Link, useNavigate } from "@remix-run/react";
+import { useLoaderData, useSearchParams, Form } from "@remix-run/react";
 import { getUserSongsFromDB } from "~/services/db.server";
 import { Song } from "~/types/customs";
 import {
@@ -71,7 +71,6 @@ export default function Updates() {
   const { songs, currentPage, totalPages } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   // Handle search input
   const handleSearch = (value: string) => {
@@ -90,6 +89,56 @@ export default function Updates() {
     });
   };
 
+  const handleDownload = async (song: Song) => {
+    try {
+      toast({
+        title: "Download Started",
+        description: `Starting download for ${song.title}...`,
+      });
+
+      const response = await fetch(`/download/${song.id}`);
+
+      if (!response.ok) {
+        const error = await response.text();
+        toast({
+          title: "Download Failed",
+          description: error,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Get and decode filename from Content-Disposition header
+      const contentDisposition = response.headers.get('Content-Disposition');
+      const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
+      const filename = filenameMatch 
+        ? decodeURIComponent(filenameMatch[1].replace(/\+/g, ' '))
+        : `${song.title}.flac`;
+
+
+      // Create a blob and trigger download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      
+      // Clean up
+      window.URL.revokeObjectURL(url);
+
+      toast({
+        title: "Download Complete",
+        description: `Successfully downloaded ${filename}`,
+      });
+    } catch (error) {
+      toast({
+        title: "Download Failed",
+        description: error instanceof Error ? error.message : "An error occurred",
+        variant: "destructive",
+      });
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -179,9 +228,13 @@ export default function Updates() {
                   <TableCell>{song.playlist}</TableCell>
                   <TableCell>{new Date(song.platform_added_at).toLocaleDateString()}</TableCell>
                   <TableCell>
-                    <Link reloadDocument to={`/download/${song.id}`} >
-                    <DownloadIcon className="h-4 w-4" />
-                    </Link>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleDownload(song)}
+                    >
+                      <DownloadIcon className="h-4 w-4" />
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}

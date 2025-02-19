@@ -4,8 +4,7 @@ import path from "path";
 import { convertSpotifyToYouTubeMusic } from "./spotToYt.server";
 import { spotifyStrategy } from "./auth.server";
 import fs from "fs/promises";
-import archiver from "archiver";
-import { Stream } from "stream";
+
 
 if (!process.env.SPOTIFY_CLIENT_ID) {
   throw new Error("Missing SPOTIFY_CLIENT_ID env");
@@ -26,7 +25,6 @@ const __dirname = path.dirname(__filename);
 // Construct the path to the yt-dlp.exe executable
 const ytDlpPath = path.resolve(__dirname, "../utils/yt-dlp.exe");
 const ffmpegPath = path.resolve(__dirname, "../utils/ffmpeg.exe");
-const ffprobePath = path.resolve(__dirname, "../utils/ffprobe.exe");
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function getLikedSongsSpotify(
@@ -97,8 +95,9 @@ export async function downloadSpotifySong(
     const outputDir = path.join(process.cwd(), "tmp", playlistName);
     await fs.mkdir(outputDir, { recursive: true });
 
-    // Create filename template with artist and title
-    const filename = `${artists.join(", ")} - ${trackName}`;
+
+    // Store original filename for Content-Disposition
+    const originalFilename = `${artists.join(", ")} - ${trackName}`;
 
     await new Promise((resolve, reject) => {
       execFile(
@@ -111,8 +110,10 @@ export async function downloadSpotifySong(
           "--audio-quality", "0",
           "--add-metadata",
           "--embed-thumbnail",
-          "-o", `"${outputDir}/${filename}.%(ext)s"`,  // Use our custom filename
-          "--ffmpeg-location", `"${path.dirname(ffmpegPath)}"`,
+          "-o", `"%(artist)s - %(title)s.%(ext)s"`,  // Use path.join for safety
+          "-P",`"${outputDir}"`,
+          "--windows-filenames",
+          "--ffmpeg-location", path.dirname(ffmpegPath),
           "--no-mtime",
         ],
         {
@@ -126,18 +127,20 @@ export async function downloadSpotifySong(
       );
     });
 
-    // Wait a moment for the file to be fully written THIS SHIT NEEDS TO BE FIXED
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
     // Get the downloaded file path
     const files = await fs.readdir(outputDir);
     if (files.length === 0) throw new Error("No file was downloaded");
     
-    // Find our specific file
-    const downloadedFile = files.find(file => file.startsWith(filename));
+    const downloadedFile = files.find(file => file.includes(trackName));
     if (!downloadedFile) throw new Error("Could not find downloaded file");
     
-    return path.join(outputDir, downloadedFile);
+    const filePath = path.join(outputDir, downloadedFile);
+
+    // Return both the file path and original filename
+    return JSON.stringify({
+      path: filePath,
+      originalName: originalFilename
+    });
 
   } catch (error) {
     console.error("Download process error:", error);
