@@ -1,29 +1,43 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
+import { jsonWithError, jsonWithSuccess } from "remix-toast";
 
 import { getUserSongsFromDB, populateSongsForUser } from "~/services/db.server";
 import { getTotalLikedSongsSpotify } from "~/services/selfApi.server";
-import { TracksRefresh } from "~/types/customs";
 
 export function loader() {
   return redirect("/updates");
 }
 
-export async function action({
-  request,
-}: ActionFunctionArgs): Promise<TracksRefresh> {
-  //Get newest addition, then add to db
-  // First, populate songs from Spotify API to DB
-  await populateSongsForUser(request);
+export async function action({ request }: ActionFunctionArgs) {
+  try {
+    // Get newest addition, then add to db
+    await populateSongsForUser(request);
 
-  // Then, get the updated songs from DB
-  const userSongs = await getUserSongsFromDB(request, 10);
+    // Then, get the updated songs from DB
+    const userSongs = await getUserSongsFromDB(request, {
+      page: 1,
+      itemsPerPage: 10
+    });
 
-  // Get the total count
-  const total = await getTotalLikedSongsSpotify(request);
-  return {
-    songs: userSongs,
-    total: total,
-    toast: { message: "Successfully refreshed", type: "success" },
-  };
+    // Get the total count
+    const total = await getTotalLikedSongsSpotify(request);
+
+    return jsonWithSuccess(
+      {
+        songs: userSongs.songs,
+        total: total
+      },
+      "Successfully refreshed library"
+    );
+
+  } catch (error) {
+    return jsonWithError(
+      {
+        songs: [],
+        total: 0
+      },
+      error instanceof Error ? error.message : "Failed to sync library"
+    );
+  }
 }

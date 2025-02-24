@@ -1,6 +1,6 @@
-import { json, LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSearchParams, Form } from "@remix-run/react";
-import { getUserSongsFromDB } from "~/services/db.server";
+import { ActionFunctionArgs, json, LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useSearchParams, Form, useNavigation } from "@remix-run/react";
+import { getUserSongsFromDB, populateSongsForUser } from "~/services/db.server";
 import { Song } from "~/types/customs";
 import {
   Table,
@@ -20,8 +20,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
 import { DownloadIcon, RefreshCw } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-
+import {  useToast } from "@/hooks/use-toast";
+import { jsonWithError,jsonWithSuccess } from "remix-toast";
+import { getTotalLikedSongsSpotify } from "~/services/selfApi.server";
 
 interface LoaderData {
   songs: Song[];
@@ -66,12 +67,53 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json(response);
 }
 
+export async function action({
+  request,
+}: ActionFunctionArgs) {
+  const formData = await request.formData();
+  const action = formData.get("action");
+
+  if (action == "refresh") {
+    try {
+      // Get newest addition, then add to db
+      await populateSongsForUser(request);
+  
+      // Then, get the updated songs from DB
+      const userSongs = await getUserSongsFromDB(request, {
+        page: 1,
+        itemsPerPage: 10
+      });
+  
+      // Get the total count
+      const total = await getTotalLikedSongsSpotify(request);
+  
+      return jsonWithSuccess(
+        {
+          songs: userSongs.songs,
+          total: total
+        },
+        "Successfully refreshed library"
+      );
+  
+    } catch (error) {
+      return jsonWithError(
+        {
+          songs: [],
+          total: 0
+        },
+        error instanceof Error ? error.message : "Failed to sync library"
+      );
+    }
+  }
+}
+
 
 export default function Updates() {
-  const { songs, currentPage, totalPages } = useLoaderData<typeof loader>();
+  
+  const { songs,currentPage, totalPages } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
-
+  const navigation = useNavigation();
   // Handle search input
   const handleSearch = (value: string) => {
     setSearchParams(prev => {
@@ -150,9 +192,13 @@ export default function Updates() {
               <h3 className="text-lg font-medium">Database Sync</h3>
               <p className="text-sm text-muted-foreground">Refresh your songs from Spotify</p>
             </div>
-            <Form action="/tracks/refresh" method="post">
-              <Button type="submit" variant="outline">
-                <RefreshCw className="mr-2 h-4 w-4" />
+            <Form 
+              method="post"
+
+            >
+              <Button type="submit" name="action" value="refresh" variant="outline">
+                {navigation.state === "submitting" ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+               
                 Sync Library
               </Button>
             </Form>
