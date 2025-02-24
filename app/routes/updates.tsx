@@ -19,10 +19,13 @@ import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, Pagi
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
-import { DownloadIcon, RefreshCw } from "lucide-react";
+import { DownloadIcon, RefreshCw, Loader } from "lucide-react";
 import {  useToast } from "@/hooks/use-toast";
 import { jsonWithError,jsonWithSuccess } from "remix-toast";
 import { getTotalLikedSongsSpotify } from "~/services/selfApi.server";
+import { useState } from "react";
+
+
 
 interface LoaderData {
   songs: Song[];
@@ -114,6 +117,9 @@ export default function Updates() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
   const navigation = useNavigation();
+  // Add state for downloading songs
+  const [downloadingSongs, setDownloadingSongs] = useState<Set<string>>(new Set());
+
   // Handle search input
   const handleSearch = (value: string) => {
     setSearchParams(prev => {
@@ -133,6 +139,7 @@ export default function Updates() {
 
   const handleDownload = async (song: Song) => {
     try {
+      setDownloadingSongs(prev => new Set([...prev, song.id.toString()]));
       toast({
         title: "Download Started",
         description: `Starting download for ${song.title}...`,
@@ -178,6 +185,12 @@ export default function Updates() {
         title: "Download Failed",
         description: error instanceof Error ? error.message : "An error occurred",
         variant: "destructive",
+      });
+    } finally {
+      setDownloadingSongs(prev => {
+        const next = new Set(prev);
+        next.delete(song.id.toString());
+        return next;
       });
     }
   };
@@ -256,14 +269,24 @@ export default function Updates() {
             </TableHeader>
             <TableBody>
               {songs.map((song) => (
-                <TableRow key={song.id}>
-                  <TableCell>
+                <TableRow 
+                  key={song.id}
+                  className={downloadingSongs.has(song.id.toString()) ? "opacity-50 pointer-events-none" : ""}
+                >
+                  <TableCell className="relative">
                     {song.album_image && (
-                      <img
-                        src={song.album_image}
-                        alt={`${song.album} cover`}
-                        className="w-16 h-16 rounded-sm object-cover"
-                      />
+                      <>
+                        <img
+                          src={song.album_image}
+                          alt={`${song.album} cover`}
+                          className="w-16 h-16 rounded-sm object-cover"
+                        />
+                        {downloadingSongs.has(song.id.toString()) && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-background/50 rounded-sm">
+                            <Loader className="h-6 w-6 animate-spin text-primary" />
+                          </div>
+                        )}
+                      </>
                     )}
                   </TableCell>
                   <TableCell>{song.title}</TableCell>
@@ -272,12 +295,17 @@ export default function Updates() {
                   </TableCell>
                   <TableCell>{song.platform}</TableCell>
                   <TableCell>{song.playlist}</TableCell>
-                  <TableCell>{new Date(song.platform_added_at).toLocaleDateString()}</TableCell>
+                  <TableCell>{new Date(song.platform_added_at).toLocaleDateString('en-GB', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                  })}</TableCell>
                   <TableCell>
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={() => handleDownload(song)}
+                      disabled={downloadingSongs.has(song.id.toString())}
                     >
                       <DownloadIcon className="h-4 w-4" />
                     </Button>
