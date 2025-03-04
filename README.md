@@ -81,3 +81,8 @@ Downloads work reliably
 Progress shows correctly
 Files organized by user
 System stays stable
+
+
+FIX The delivery of the file (send response with file without redirect)
+Change the update button to old css (icon ghost)
+Add a component to the navbar, that shows every job ongoing (for current user).

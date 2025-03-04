@@ -20,11 +20,13 @@ export const loader: LoaderFunction = async ({ params }) => {
         result: "error",
       }, "No Song Found");
     }
+    console.log(song.artist_name)
 
     const result = await downloadSpotifySong(
-      song.title,
-      JSON.parse(song.artist_name),
-      song.playlist
+      song.title!,
+      song.artist_name!,
+      song.playlist!,
+      "arnaud"
     );
 
     const { path: filePath, originalName } = JSON.parse(result);

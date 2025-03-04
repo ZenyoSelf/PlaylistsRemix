@@ -19,13 +19,12 @@ import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, Pagi
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
-import { DownloadIcon, RefreshCw, Loader } from "lucide-react";
-import {  useToast } from "@/hooks/use-toast";
-import { jsonWithError,jsonWithSuccess } from "remix-toast";
+import { RefreshCw, Loader } from "lucide-react";
+import { jsonWithError, jsonWithSuccess } from "remix-toast";
 import { getTotalLikedSongsSpotify } from "~/services/selfApi.server";
 import { useState } from "react";
-
-
+import { DownloadButton } from "~/components/DownloadButton";
+import { DownloadManager } from "~/components/DownloadManager";
 
 interface LoaderData {
   songs: Song[];
@@ -34,7 +33,6 @@ interface LoaderData {
   platforms: string[];
   playlists: string[];
 }
-
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
@@ -80,16 +78,16 @@ export async function action({
     try {
       // Get newest addition, then add to db
       await populateSongsForUser(request);
-  
+
       // Then, get the updated songs from DB
       const userSongs = await getUserSongsFromDB(request, {
         page: 1,
         itemsPerPage: 10
       });
-  
+
       // Get the total count
       const total = await getTotalLikedSongsSpotify(request);
-  
+
       return jsonWithSuccess(
         {
           songs: userSongs.songs,
@@ -97,7 +95,7 @@ export async function action({
         },
         "Successfully refreshed library"
       );
-  
+
     } catch (error) {
       return jsonWithError(
         {
@@ -110,15 +108,11 @@ export async function action({
   }
 }
 
-
 export default function Updates() {
-  
-  const { songs,currentPage, totalPages } = useLoaderData<typeof loader>();
+  const { songs, currentPage, totalPages } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { toast } = useToast();
   const navigation = useNavigation();
-  // Add state for downloading songs
-  const [downloadingSongs, setDownloadingSongs] = useState<Set<string>>(new Set());
+  const [downloadingSongs] = useState<Set<string>>(new Set());
 
   // Handle search input
   const handleSearch = (value: string) => {
@@ -137,64 +131,6 @@ export default function Updates() {
     });
   };
 
-  const handleDownload = async (song: Song) => {
-    try {
-      setDownloadingSongs(prev => new Set([...prev, song.id.toString()]));
-      toast({
-        title: "Download Started",
-        description: `Starting download for ${song.title}...`,
-      });
-
-      const response = await fetch(`/download/${song.id}`);
-
-      if (!response.ok) {
-        const error = await response.text();
-        toast({
-          title: "Download Failed",
-          description: error,
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Get and decode filename from Content-Disposition header
-      const contentDisposition = response.headers.get('Content-Disposition');
-      const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
-      const filename = filenameMatch 
-        ? decodeURIComponent(filenameMatch[1].replace(/\+/g, ' '))
-        : `${song.title}.flac`;
-
-
-      // Create a blob and trigger download
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      
-      // Clean up
-      window.URL.revokeObjectURL(url);
-
-      toast({
-        title: "Download Complete",
-        description: `Successfully downloaded ${filename}`,
-      });
-    } catch (error) {
-      toast({
-        title: "Download Failed",
-        description: error instanceof Error ? error.message : "An error occurred",
-        variant: "destructive",
-      });
-    } finally {
-      setDownloadingSongs(prev => {
-        const next = new Set(prev);
-        next.delete(song.id.toString());
-        return next;
-      });
-    }
-  };
-
   return (
     <div className="space-y-4">
       {/* Refresh Card */}
@@ -205,16 +141,15 @@ export default function Updates() {
               <h3 className="text-lg font-medium">Database Sync</h3>
               <p className="text-sm text-muted-foreground">Refresh your songs from Spotify</p>
             </div>
-            <Form 
-              method="post"
+            <div className="flex items-center gap-2">
 
-            >
-              <Button type="submit" name="action" value="refresh" variant="outline">
-                {navigation.state === "submitting" ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-               
-                Sync Library
-              </Button>
-            </Form>
+              <Form method="post">
+                <Button type="submit" name="action" value="refresh" variant="outline">
+                  {navigation.state === "submitting" ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                  Sync Library
+                </Button>
+              </Form>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -269,7 +204,7 @@ export default function Updates() {
             </TableHeader>
             <TableBody>
               {songs.map((song) => (
-                <TableRow 
+                <TableRow
                   key={song.id}
                   className={downloadingSongs.has(song.id.toString()) ? "opacity-50 pointer-events-none" : ""}
                 >
@@ -301,14 +236,7 @@ export default function Updates() {
                     day: '2-digit'
                   })}</TableCell>
                   <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDownload(song)}
-                      disabled={downloadingSongs.has(song.id.toString())}
-                    >
-                      <DownloadIcon className="h-4 w-4" />
-                    </Button>
+                    <DownloadButton songId={song.id.toString()} userId="arnaud" />
                   </TableCell>
                 </TableRow>
               ))}

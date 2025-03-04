@@ -8,6 +8,7 @@ import { Link } from "@remix-run/react";
 import styles from "~/global.css?url";
 import { LinksFunction } from "@remix-run/node";
 import { HomeIcon } from "lucide-react";
+import { DownloadManager } from "./DownloadManager";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: styles }];
 
@@ -20,20 +21,25 @@ export default function Header() {
           <span className="text-lg prose">ZenyoPlaylists</span>
         </Link>
       </div>
-      <NavigationMenu>
-        <NavigationMenuList>
-          <NavigationMenuItem>
-            <NavigationMenuLink asChild>
-              <Link
-                className="flex h-full w-full select-none flex-col justify-end rounded-md bg-gradient-to-b from-muted/50 to-muted p-2 no-underline outline-none focus:shadow-md"
-                to={"/updates"}
-              >
-                DL Manager
-              </Link>
-            </NavigationMenuLink>
-          </NavigationMenuItem>
-        </NavigationMenuList>
-      </NavigationMenu>
+      
+      <div className="flex items-center gap-4">
+        <NavigationMenu>
+          <NavigationMenuList>
+            <NavigationMenuItem>
+              <NavigationMenuLink asChild>
+                <Link
+                  className="flex h-full w-full select-none flex-col justify-end rounded-md bg-gradient-to-b from-muted/50 to-muted p-2 no-underline outline-none focus:shadow-md"
+                  to={"/updates"}
+                >
+                  DL Manager
+                </Link>
+              </NavigationMenuLink>
+            </NavigationMenuItem>
+          </NavigationMenuList>
+        </NavigationMenu>
+
+        <DownloadManager userId="arnaud" />
+      </div>
     </header>
   );
 }

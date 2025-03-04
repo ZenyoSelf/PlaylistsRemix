@@ -4,7 +4,12 @@ import path from "path";
 import { convertSpotifyToYouTubeMusic } from "./spotToYt.server";
 import { spotifyStrategy } from "./auth.server";
 import fs from "fs/promises";
+import { Song } from "~/types/customs";
 
+interface SpotifyTrack {
+  total: number;
+  items: Array<unknown>;
+}
 
 if (!process.env.SPOTIFY_CLIENT_ID) {
   throw new Error("Missing SPOTIFY_CLIENT_ID env");
@@ -38,7 +43,7 @@ export async function getLikedSongsSpotify(
     const fetchLikedSongsTracks = (
       limit: number,
       offset: number
-    ): Promise<SpotifyApi.UsersSavedTracksResponse> =>
+    ): Promise<SpotifyTrack> =>
       fetch(
         `https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${offset}`,
         {
@@ -65,39 +70,81 @@ export async function getTotalLikedSongsSpotify(request: Request): Promise<numbe
     throw new Error("No session established to spotify");
   }
 
-  return fetch(
+  const response = await fetch(
     `https://api.spotify.com/v1/me/tracks?limit=${0}&offset=${0}`,
     {
       method: "GET",
       headers: { Authorization: `Bearer ${session?.accessToken}` },
     }
-  ).then(async (r) => {
-    const data = (await r.json()) as SpotifyApi.UsersSavedTracksResponse;
-    return data.total
-  }
   );
-
+  const data = (await response.json()) as SpotifyTrack;
+  return data.total;
 }
 
+function normalizeFilename(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[()[\]{}]/g, '') // Remove brackets
+    .replace(/[-_]/g, ' ')     // Replace dashes and underscores with spaces
+    .replace(/\s+/g, ' ')      // Normalize spaces
+    .trim();
+}
+
+function findMatchingFile(files: string[], trackName: string, artists: string[]): string | undefined {
+  // Create variations of the expected filename
+  const variations = [
+    `${artists.join(",")} - ${trackName}`, // Original format
+    trackName,                             // Just the track name
+    normalizeFilename(`${artists.join(",")} - ${trackName}`), // Normalized version
+  ];
+
+  // Try exact matches first
+  for (const file of files) {
+    const fileWithoutExt = path.parse(file).name;
+    if (variations.includes(fileWithoutExt)) {
+      return file;
+    }
+  }
+
+  // Try normalized comparison
+  const normalizedFiles = files.map(file => ({
+    original: file,
+    normalized: normalizeFilename(path.parse(file).name)
+  }));
+
+  // Try to find a match using normalized versions
+  for (const variation of variations) {
+    const normalized = normalizeFilename(variation);
+    const match = normalizedFiles.find(file => 
+      file.normalized.includes(normalized) || normalized.includes(file.normalized)
+    );
+    if (match) {
+      return match.original;
+    }
+  }
+
+  return undefined;
+}
 
 export async function downloadSpotifySong(
   trackName: string,
   artists: string[],
-  playlistName: string
+  playlistName: string,
+  userId: string
 ): Promise<string> {
   try {
     const song = await convertSpotifyToYouTubeMusic(trackName, artists);
-    
+
     if (!song) {
       throw new Error(`Could not find YouTube video for: ${trackName} by ${artists.join(", ")}`);
     }
 
-    const outputDir = path.join(process.cwd(), "tmp", playlistName);
+    const outputDir = path.join(process.cwd(), "tmp", userId, playlistName);
+    console.log(outputDir)
     await fs.mkdir(outputDir, { recursive: true });
 
-
     // Store original filename for Content-Disposition
-    const originalFilename = `${artists.join(", ")} - ${trackName}`;
+    const originalFilename = `${artists.join(",")} - ${trackName}`;
 
     await new Promise((resolve, reject) => {
       execFile(
@@ -110,8 +157,8 @@ export async function downloadSpotifySong(
           "--audio-quality", "0",
           "--add-metadata",
           "--embed-thumbnail",
-          "-o", `"%(artist)s - %(title)s.%(ext)s"`,  // Use path.join for safety
-          "-P",`"${outputDir}"`,
+          "-o", `"%(artist)s - %(title)s.%(ext)s"`,
+          "-P", `"${outputDir}"`,
           "--windows-filenames",
           "--ffmpeg-location", path.dirname(ffmpegPath),
           "--no-mtime",
@@ -120,7 +167,7 @@ export async function downloadSpotifySong(
           env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
           shell: true
         },
-        (error, stdout, stderr) => {
+        (error, stdout) => {
           if (error) reject(error);
           else resolve(stdout);
         }
@@ -130,10 +177,13 @@ export async function downloadSpotifySong(
     // Get the downloaded file path
     const files = await fs.readdir(outputDir);
     if (files.length === 0) throw new Error("No file was downloaded");
+
+    console.log("Available files:", files);
+    console.log("Looking for track:", trackName);
     
-    const downloadedFile = files.find(file => file.includes(trackName));
+    const downloadedFile = findMatchingFile(files, trackName, artists);
     if (!downloadedFile) throw new Error("Could not find downloaded file");
-    
+
     const filePath = path.join(outputDir, downloadedFile);
 
     // Return both the file path and original filename
@@ -149,17 +199,18 @@ export async function downloadSpotifySong(
 }
 
 export async function downloadMultipleSongs(
-  songs: { trackName: string; artists: string[] }[],
+  songs: { song: Song; userId: string }[],
   playlistName: string
 ): Promise<string[]> {
   try {
     const downloadedFiles: string[] = [];
 
-    for (const song of songs) {
+    for (const { song, userId } of songs) {
       const filePath = await downloadSpotifySong(
-        song.trackName,
-        song.artists,
-        playlistName
+        song.title!,
+        song.artist_name!,
+        playlistName,
+        userId,
       );
       downloadedFiles.push(filePath);
     }

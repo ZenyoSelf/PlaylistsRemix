@@ -4,6 +4,7 @@ import { spotifyStrategy } from "./auth.server";
 import { getLikedSongsSpotify } from "./selfApi.server";
 
 import path from "path";
+import { Song } from '~/types/customs';
 
 // Initialize database connection
 async function getDb() {
@@ -215,7 +216,8 @@ export async function populateSongsForUser(request: Request) {
     return true;
 }
 
-export async function getSongById(id: string) {
+export async function getSongById(id: string): Promise<Song | null> {
   const db = await getDb();
-  return db.get("SELECT * FROM song WHERE id = ?", id);
+  const song = await db.get("SELECT * FROM song WHERE id = ?", id);
+  return song || null;
 }
