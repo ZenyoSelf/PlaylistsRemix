@@ -12,7 +12,7 @@ interface DownloadJob {
   id: string;
   songName: string;
   progress: number;
-  status: 'downloading' | 'completed' | 'error';
+  status: 'queued' | 'downloading' | 'completed' | 'error';
   error?: string;
   filePath?: string;
 }
@@ -29,21 +29,27 @@ export function DownloadManager({ userId }: { userId: string }) {
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
       
-      if (data.type === 'progress') {
+      if (data.type === 'queued') {
+        setJobs(prevJobs => {
+          if (prevJobs.some(job => job.id === data.jobId)) {
+            return prevJobs;
+          }
+          return [...prevJobs, {
+            id: data.jobId,
+            songName: data.songName,
+            progress: 0,
+            status: 'queued'
+          }];
+        });
+      } else if (data.type === 'progress') {
         setJobs(prevJobs => {
           const jobIndex = prevJobs.findIndex(job => job.id === data.jobId);
-          if (jobIndex === -1) {
-            return [...prevJobs, {
-              id: data.jobId,
-              songName: data.songName || 'Unknown Song',
-              progress: data.progress,
-              status: 'downloading'
-            }];
-          }
+          if (jobIndex === -1) return prevJobs;
 
           const updatedJobs = [...prevJobs];
           updatedJobs[jobIndex] = {
             ...updatedJobs[jobIndex],
+            status: 'downloading',
             progress: data.progress
           };
           return updatedJobs;
@@ -87,16 +93,20 @@ export function DownloadManager({ userId }: { userId: string }) {
     };
   }, [userId]);
 
-  const handleDownload = async (jobId: string, filePath: string) => {
+  const handleDownload = async (jobId: string) => {
     try {
-      const response = await fetch(`/api/download/${jobId}?filePath=${encodeURIComponent(filePath)}&userId=${userId}`);
+      const response = await fetch(`/api/download/${jobId}`);
       if (!response.ok) throw new Error('Download failed');
 
       const blob = await response.blob();
+      const contentDisposition = response.headers.get('Content-Disposition');
+      const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
+      const filename = filenameMatch ? filenameMatch[1] : 'download.flac';
+
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = filePath;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -163,6 +173,7 @@ export function DownloadManager({ userId }: { userId: string }) {
                   <Progress value={job.progress} className="h-1.5" />
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground">
+                      {job.status === 'queued' && 'Queued'}
                       {job.status === 'downloading' && `${Math.round(job.progress)}%`}
                       {job.status === 'completed' && 'Completed'}
                       {job.status === 'error' && (
@@ -174,7 +185,7 @@ export function DownloadManager({ userId }: { userId: string }) {
                         variant="outline"
                         size="sm"
                         className="h-7 text-xs"
-                        onClick={() => handleDownload(job.id, job.filePath!)}
+                        onClick={() => handleDownload(job.id)}
                       >
                         <Download className="h-3 w-3 mr-1" />
                         Download

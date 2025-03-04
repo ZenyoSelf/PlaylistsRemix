@@ -1,36 +1,55 @@
 import { LoaderFunction } from "@remix-run/node";
 import path from "path";
 import fs from "fs/promises";
+import { downloadQueue } from "~/services/queue.server";
+import { getSongById } from "~/services/db.server";
 
-export const loader: LoaderFunction = async ({ request }) => {
-  const url = new URL(request.url);
-  const filePath = url.searchParams.get("filePath");
-  const userId = url.searchParams.get("userId");
-  const playlist = url.searchParams.get("playlist");
-
-  if (!filePath || !userId || !playlist) {
-    return new Response("Missing file path or user ID", { status: 400 });
+export const loader: LoaderFunction = async ({ params }) => {
+  const jobId = params.jobId;
+  
+  if (!jobId) {
+    return new Response("Missing job ID", { status: 400 });
   }
 
   try {
-    console.log("File path:", filePath);
-    const absolutePath = path.join(process.cwd(), "tmp", userId, playlist, filePath);
+    // Get job from queue
+    const job = await downloadQueue.getJob(jobId);
+    if (!job) {
+      return new Response("Job not found", { status: 404 });
+    }
 
+    // Get job data
+    const { songId, userId } = job.data;
 
-    const fileExists = await fs.access(absolutePath)
-      .then(() => true)
-      .catch(() => false);
+    // Get song details
+    const song = await getSongById(songId);
+    if (!song) {
+      return new Response("Song not found", { status: 404 });
+    }
 
-    if (!fileExists) {
+    // Get directory path
+    const dirPath = path.join(
+      process.cwd(),
+      "tmp",
+      userId,
+      song.playlist || 'default'
+    );
+
+    // List files in directory and find the one we want
+    const files = await fs.readdir(dirPath);
+    const downloadFile = files.find(file => file.endsWith('.flac'));
+
+    if (!downloadFile) {
       return new Response("File not found", { status: 404 });
     }
 
+    const absolutePath = path.join(dirPath, downloadFile);
     const fileBuffer = await fs.readFile(absolutePath);
+    
     const headers = new Headers();
     headers.set("Content-Type", "audio/flac");
-    headers.set("Content-Disposition", `attachment; filename="${path.basename(filePath)}"`);
+    headers.set("Content-Disposition", `attachment; filename="${downloadFile}"`);
     headers.set("Content-Length", fileBuffer.length.toString());
-    // Prevent caching
     headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     headers.set("Pragma", "no-cache");
     headers.set("Expires", "0");

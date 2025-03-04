@@ -2,6 +2,7 @@ import { json } from '@remix-run/node';
 import type { ActionFunction } from '@remix-run/node';
 import { getSongById } from '~/services/db.server';
 import { downloadQueue } from '~/services/queue.server';
+import { emitProgress } from '~/workers/downloadWorker.server';
 
 export const action: ActionFunction = async ({ request }) => {
   if (request.method !== 'POST') {
@@ -9,12 +10,13 @@ export const action: ActionFunction = async ({ request }) => {
   }
 
   try {
-    const { songId,  userId } = await request.json();
+    const { songId, userId } = await request.json();
+    
+    // Get song details first
     const song = await getSongById(songId);
-
-    if (!song  || !userId ) {
+    if (!song) {
       return json(
-        { error: 'Missing required fields: songId, userID or song could not be found' },
+        { error: 'Song not found' },
         { status: 400 }
       );
     }
@@ -29,6 +31,14 @@ export const action: ActionFunction = async ({ request }) => {
         type: 'exponential',
         delay: 1000,
       },
+    });
+
+    // Emit queued event immediately
+    emitProgress(userId, {
+      type: 'queued',
+      progress: 0,
+      jobId: job.id,
+      songName: song.title || 'Unknown Song'
     });
 
     return json({

@@ -4,7 +4,7 @@ import { downloadSpotifySong } from '~/services/selfApi.server';
 import { getSongById } from '~/services/db.server';
 
 interface ProgressData {
-  type: 'progress' | 'complete' | 'error';
+  type: 'progress' | 'complete' | 'error' | 'queued';
   progress?: number;
   jobId: string | number;
   songName: string;
@@ -23,7 +23,7 @@ export function removeDownloadStream(userId: string) {
   downloadStreams.delete(userId);
 }
 
-function emitProgress(userId: string, data: ProgressData) {
+export function emitProgress(userId: string, data: ProgressData) {
   const controller = downloadStreams.get(userId);
   if (controller) {
     const encoder = new TextEncoder();
