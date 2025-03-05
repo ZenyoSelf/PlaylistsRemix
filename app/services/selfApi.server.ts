@@ -2,9 +2,9 @@ import { execFile } from "child_process";
 import { fileURLToPath } from "url";
 import path from "path";
 import { convertSpotifyToYouTubeMusic } from "./spotToYt.server";
-import { spotifyStrategy } from "./auth.server";
 import fs from "fs/promises";
 import { Song, SpotifyTrackItem, SpotifyTrack, SpotifyPlaylist } from "~/types/customs";
+import { getProviderSession } from "./auth.server";
 
 // Define interfaces for Spotify API responses
 // Removed interfaces as they are now imported from customs.ts
@@ -153,7 +153,7 @@ export async function getPlaylistTracksSpotify(accessToken: string, playlistId: 
 }
 
 export async function getTotalLikedSongsSpotify(request: Request): Promise<number> {
-  const session = await spotifyStrategy.getSession(request);
+  const session = await getProviderSession(request, "spotify");
   if (!session) {
     throw new Error("No session established to spotify");
   }

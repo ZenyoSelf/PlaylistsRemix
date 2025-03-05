@@ -58,3 +58,98 @@ export interface SpotifyPlaylist {
   href: string;
   uri: string;
 }
+
+// YouTube API interfaces
+export interface YouTubeTrackItem {
+  id: string;
+  snippet: {
+    publishedAt: string;
+    title: string;
+    description: string;
+    thumbnails: {
+      default: { url: string; width: number; height: number };
+      medium: { url: string; width: number; height: number };
+      high: { url: string; width: number; height: number };
+      standard?: { url: string; width: number; height: number };
+      maxres?: { url: string; width: number; height: number };
+    };
+    channelTitle: string;
+    playlistId: string;
+    position: number;
+    resourceId: {
+      kind: string;
+      videoId: string;
+    };
+  };
+}
+
+
+// Interface for YouTube playlist items
+export interface YouTubePlaylistItem {
+  id: string;
+  snippet: {
+    publishedAt: string;
+    title: string;
+    description: string;
+    thumbnails: {
+      default: { url: string; width: number; height: number };
+      medium: { url: string; width: number; height: number };
+      high: { url: string; width: number; height: number };
+      standard?: { url: string; width: number; height: number };
+      maxres?: { url: string; width: number; height: number };
+    };
+    channelTitle: string;
+    playlistId: string;
+    position: number;
+    resourceId: {
+      kind: string;
+      videoId: string;
+    };
+  };
+}
+
+// Interface for YouTube playlist response
+export interface YouTubePlaylistResponse {
+  kind: string;
+  etag: string;
+  nextPageToken?: string;
+  prevPageToken?: string;
+  pageInfo: {
+    totalResults: number;
+    resultsPerPage: number;
+  };
+  items: YouTubePlaylistItem[];
+}
+
+// Interface for YouTube playlist details
+export interface YouTubePlaylist {
+  id: string;
+  snippet: {
+    title: string;
+    description: string;
+    thumbnails: {
+      default: { url: string; width: number; height: number };
+      medium: { url: string; width: number; height: number };
+      high: { url: string; width: number; height: number };
+      standard?: { url: string; width: number; height: number };
+      maxres?: { url: string; width: number; height: number };
+    };
+    channelTitle: string;
+  };
+  contentDetails: {
+    itemCount: number;
+  };
+}
+
+// Interface for YouTube playlists response
+export interface YouTubePlaylistsResponse {
+  kind: string;
+  etag: string;
+  nextPageToken?: string;
+  prevPageToken?: string;
+  pageInfo: {
+    totalResults: number;
+    resultsPerPage: number;
+  };
+  items: YouTubePlaylist[];
+}

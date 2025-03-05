@@ -1,7 +1,7 @@
 import { ActionFunctionArgs, json, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSearchParams, Form, useNavigation } from "@remix-run/react";
 import { getUserSongsFromDB, populateSongsForUser, getFilters } from "~/services/db.server";
-import { spotifyStrategy } from "~/services/auth.server";
+import { getProviderSession } from "~/services/auth.server";
 import { Song } from "~/types/customs";
 import {
   Table,
@@ -25,6 +25,7 @@ import { jsonWithError, jsonWithSuccess } from "remix-toast";
 import { getTotalLikedSongsSpotify } from "~/services/selfApi.server";
 import { useState } from "react";
 import { DownloadButton } from "~/components/DownloadButton";
+import { redirect } from "@remix-run/node";
 
 interface LoaderData {
   songs: Song[];
@@ -36,6 +37,15 @@ interface LoaderData {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  // Check if the user is authenticated with either provider
+  const spotifySession = await getProviderSession(request, "spotify");
+  const youtubeSession = await getProviderSession(request, "youtube");
+  
+  // If not authenticated with either provider, redirect to account manager
+  if (!spotifySession && !youtubeSession) {
+    return redirect("/accountmanager");
+  }
+
   const url = new URL(request.url);
   const page = parseInt(url.searchParams.get("page") || "1");
   const itemsPerPage = parseInt(url.searchParams.get("itemsPerPage") || "20");
@@ -59,7 +69,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
 
   // Get filter options (platforms and playlists)
-  const session = await spotifyStrategy.getSession(request);
+  const session = await getProviderSession(request, "spotify");
   const userEmail = session?.user?.email || '';
   const filterOptions = await getFilters(userEmail);
 

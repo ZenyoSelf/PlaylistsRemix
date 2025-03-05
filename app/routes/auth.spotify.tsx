@@ -1,12 +1,16 @@
-import type { ActionFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
-
+import type {  LoaderFunctionArgs } from "@remix-run/node";
 import { authenticator } from "~/services/auth.server";
 
-export function loader() {
-  return redirect("/");
-}
 
-export async function action({ request }: ActionFunctionArgs) {
-  return await authenticator.authenticate("spotify", request);
+// This route is used to initiate the Spotify authentication flow
+export async function loader({ request }: LoaderFunctionArgs) {
+  // If the user is already authenticated, redirect to the account manager
+  const user = await authenticator.isAuthenticated(request);
+  if (user) {
+    return redirect("/accountmanager");
+  }
+  
+    // Initiate the Spotify authentication flow
+    return authenticator.authenticate("spotify", request);
 }

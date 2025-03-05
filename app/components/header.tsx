@@ -24,7 +24,7 @@ export default function Header() {
       
       <div className="flex items-center gap-4">
         <NavigationMenu>
-          <NavigationMenuList>
+          <NavigationMenuList className="flex gap-2">
             <NavigationMenuItem>
               <NavigationMenuLink asChild>
                 <Link
@@ -32,6 +32,17 @@ export default function Header() {
                   to={"/updates"}
                 >
                   DL Manager
+                </Link>
+              </NavigationMenuLink>
+            </NavigationMenuItem>
+            
+            <NavigationMenuItem>
+              <NavigationMenuLink asChild>
+                <Link
+                  className="flex h-full w-full select-none flex-col justify-end rounded-md bg-gradient-to-b from-muted/50 to-muted p-2 no-underline outline-none focus:shadow-md"
+                  to={"/accountmanager"}
+                >
+                  Account Manager
                 </Link>
               </NavigationMenuLink>
             </NavigationMenuItem>
