@@ -4,12 +4,10 @@ import path from "path";
 import { convertSpotifyToYouTubeMusic } from "./spotToYt.server";
 import { spotifyStrategy } from "./auth.server";
 import fs from "fs/promises";
-import { Song } from "~/types/customs";
+import { Song, SpotifyTrackItem, SpotifyTrack, SpotifyPlaylist } from "~/types/customs";
 
-interface SpotifyTrack {
-  total: number;
-  items: Array<unknown>;
-}
+// Define interfaces for Spotify API responses
+// Removed interfaces as they are now imported from customs.ts
 
 if (!process.env.SPOTIFY_CLIENT_ID) {
   throw new Error("Missing SPOTIFY_CLIENT_ID env");
@@ -63,6 +61,96 @@ export async function getLikedSongsSpotify(
   }
 }
 
+export async function getUserPlaylistsSpotify(accessToken: string) {
+  try {
+    const response = await fetch(
+      'https://api.spotify.com/v1/me/playlists',
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    
+    const data = await response.json();
+    return data.items; // Array of playlist objects
+  } catch (error) {
+    console.error('Error fetching playlists:', error);
+    throw error;
+  }
+}
+
+export async function getAllUserPlaylistsSpotify(accessToken: string) {
+  try {
+    const limit = 50; // Maximum limit allowed by Spotify API
+    let offset = 0;
+    let allPlaylists: SpotifyPlaylist[] = [];
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await fetch(
+        `https://api.spotify.com/v1/me/playlists?limit=${limit}&offset=${offset}`,
+        {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch playlists: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      allPlaylists = allPlaylists.concat(data.items);
+      
+      // Check if there are more playlists to fetch
+      offset += limit;
+      hasMore = data.items.length === limit && offset < data.total;
+    }
+
+    return allPlaylists;
+  } catch (error) {
+    console.error('Error fetching all playlists:', error);
+    throw error;
+  }
+}
+
+export async function getPlaylistTracksSpotify(accessToken: string, playlistId: string) {
+  try {
+    const limit = 100; // Maximum limit allowed by Spotify API
+    let offset = 0;
+    let allTracks: SpotifyTrackItem[] = [];
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await fetch(
+        `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}`,
+        {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch playlist tracks: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      allTracks = allTracks.concat(data.items);
+      
+      // Check if there are more tracks to fetch
+      offset += limit;
+      hasMore = data.items.length === limit && offset < data.total;
+    }
+
+    return {
+      total: allTracks.length,
+      items: allTracks
+    };
+  } catch (error) {
+    console.error('Error fetching playlist tracks:', error);
+    throw error;
+  }
+}
 
 export async function getTotalLikedSongsSpotify(request: Request): Promise<number> {
   const session = await spotifyStrategy.getSession(request);

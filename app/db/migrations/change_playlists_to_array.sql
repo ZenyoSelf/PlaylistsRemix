@@ -1,0 +1,1 @@
+select * from song where local = 1;

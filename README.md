@@ -86,11 +86,12 @@ System stays stable
 DONE : FIX The delivery of the file (send response with file without redirect)
 DONE : Change the update button to old css (icon ghost)
 DONE : Add a component to the navbar, that shows every job ongoing (for current user).
-
-
 DONE : Make the download button by case - If file present, download directly, if not, add to queue and do like right now.
 DONE : Fix downloadmanager to get currently going jobs.
 DONE : Add cron jobs for cleaning files (every 2 days or something)
+DONE : Add a selector next to all platforms, to filter all local files, not downloaded file or all
 
-Add a selector next to all platforms, to filter all local files, not downloaded file or all
-
+Add multiple platforms. implement some kind of account manager thing.
+DONE : Implement playlists fetch.
+Fix the multiple playlists thing. Only one track must be shown, even if in multiple playlists.
+Add a new selector for playlists.
