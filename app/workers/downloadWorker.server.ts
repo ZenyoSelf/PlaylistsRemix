@@ -1,7 +1,7 @@
 import { downloadQueue } from '~/services/queue.server';
 import path from 'path';
 import { downloadSpotifySong } from '~/services/selfApi.server';
-import { getSongById } from '~/services/db.server';
+import { getSongById, updateSongDownloadStatus, updateSongLocalStatus } from '~/services/db.server';
 
 interface ProgressData {
   type: 'progress' | 'complete' | 'error' | 'queued';
@@ -65,6 +65,10 @@ downloadQueue.process(async (job) => {
       jobId: job.id,
       songName: song.title || 'Unknown Song'
     });
+
+    // Update song status in database
+    await updateSongDownloadStatus(songId, true);
+    await updateSongLocalStatus(songId, true);
 
     // Emit completion with job info
     emitProgress(userId, {

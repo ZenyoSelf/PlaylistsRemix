@@ -2,6 +2,7 @@ import Queue from 'bull';
 import { createBullBoard } from '@bull-board/api';
 import { BullAdapter } from '@bull-board/api/bullAdapter';
 import { ExpressAdapter } from '@bull-board/express';
+import { cleanupOldFiles } from '~/workers/cleanupWorker.server';
 
 // Define job data interface
 export interface DownloadJobData {
@@ -24,6 +25,30 @@ export const downloadQueue = new Queue<DownloadJobData>('download-queue', {
     removeOnComplete: false,
     removeOnFail: false,
   },
+});
+
+// Create cleanup queue with recurring job
+export const cleanupQueue = new Queue('cleanup-queue', {
+  redis: {
+    host: 'localhost',
+    port: 6379,
+  }
+});
+
+// Add recurring job to run every day at midnight
+cleanupQueue.add(
+  {},
+  {
+    repeat: {
+      cron: '0 0 * * *' // Run at midnight every day
+    }
+  }
+);
+
+// Process cleanup jobs
+cleanupQueue.process(async () => {
+  await cleanupOldFiles();
+  return { success: true };
 });
 
 // Setup Bull Board for monitoring

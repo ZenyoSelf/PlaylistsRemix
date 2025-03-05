@@ -19,12 +19,11 @@ import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, Pagi
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
-import { RefreshCw, Loader } from "lucide-react";
+import { RefreshCw, Loader, CheckCircle } from "lucide-react";
 import { jsonWithError, jsonWithSuccess } from "remix-toast";
 import { getTotalLikedSongsSpotify } from "~/services/selfApi.server";
 import { useState } from "react";
 import { DownloadButton } from "~/components/DownloadButton";
-import { DownloadManager } from "~/components/DownloadManager";
 
 interface LoaderData {
   songs: Song[];
@@ -41,6 +40,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const search = url.searchParams.get("search") || "";
   const platform = url.searchParams.get("platform") || "";
   const playlist = url.searchParams.get("playlist") || "";
+  const songStatus = url.searchParams.get("songStatus") || "";
   const sortBy = url.searchParams.get("sortBy") || "platform_added_at";
   const sortDirection = url.searchParams.get("sortDirection") || "desc";
 
@@ -50,6 +50,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     search,
     platform,
     playlist,
+    songStatus,
     sortBy,
     sortDirection: sortDirection as "desc" | "asc"
   });
@@ -183,6 +184,25 @@ export default function Updates() {
                 <SelectItem value="Youtube">Youtube</SelectItem>
               </SelectContent>
             </Select>
+            <Select
+              value={searchParams.get("songStatus") || "all"}
+              onValueChange={(value) => {
+                setSearchParams(prev => {
+                  prev.set("songStatus", value === "all" ? "" : value);
+                  prev.set("page", "1");
+                  return prev;
+                });
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Song Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="notDownloaded">Not Downloaded</SelectItem>
+                <SelectItem value="localFiles">Ready to Download</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>
@@ -236,7 +256,14 @@ export default function Updates() {
                     day: '2-digit'
                   })}</TableCell>
                   <TableCell>
-                    <DownloadButton songId={song.id.toString()} userId="arnaud" />
+                    <div className="relative inline-block">
+                      <DownloadButton songId={song.id.toString()} userId="arnaud" />
+                      {song.downloaded ?  (
+                        <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground rounded-full w-4 h-4 text-xs flex items-center justify-center">
+                          <CheckCircle className="h-3 w-3" />
+                        </span>
+                      ) : ""}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

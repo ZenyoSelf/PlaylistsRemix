@@ -7,7 +7,7 @@ import path from "path";
 import { Song } from '~/types/customs';
 
 // Initialize database connection
-async function getDb() {
+export async function getDb() {
     return open({
         filename: path.join(process.cwd(), "app/db/songs.db"),
         driver: sqlite3.Database
@@ -34,6 +34,7 @@ async function initDb() {
       platform TEXT,
       url TEXT,
       downloaded BOOLEAN,
+      local BOOLEAN DEFAULT 0,
       platform_added_at TEXT,
       user TEXT,
       FOREIGN KEY(user) REFERENCES user(user)
@@ -54,6 +55,16 @@ export async function getSongs(userUUID: string) {
     } catch (error) {
         return error;
     }
+}
+
+export async function updateSongDownloadStatus(songId: string, downloaded: boolean) {
+    const db = await getDb();
+    await db.run("UPDATE song SET downloaded = ? WHERE id = ?", [downloaded, songId]);
+}
+
+export async function updateSongLocalStatus(songId: string, local: boolean) {
+    const db = await getDb();
+    await db.run("UPDATE song SET local = ? WHERE id = ?", [local, songId]);
 }
 
 export async function getLatestRefresh(email: string) {
@@ -84,6 +95,7 @@ export async function getUserSongsFromDB(
     search?: string;
     platform?: string;
     playlist?: string;
+    songStatus?:string;
     sortBy?: string;
     sortDirection?: 'asc' | 'desc';
   } = {}
@@ -97,6 +109,7 @@ export async function getUserSongsFromDB(
     search = '',
     platform = '',
     playlist = '',
+    songStatus = '',
     sortBy = 'platform_added_at',
     sortDirection = 'desc'
   } = options;
@@ -120,6 +133,13 @@ export async function getUserSongsFromDB(
   if (playlist) {
     whereConditions.push('playlist = ?');
     params.push(playlist);
+  }
+  if (songStatus) {
+    if(songStatus === 'notDownloaded') {
+      whereConditions.push('downloaded = 0');
+    } else if (songStatus === 'localFiles') {
+      whereConditions.push('local = 1');
+    }
   }
 
   // Get total count for pagination

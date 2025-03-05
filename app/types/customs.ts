@@ -11,6 +11,7 @@ export interface Song {
   platform_added_at: string;
   url: string;
   downloaded: boolean | null;
+  local: boolean | null;
 }
 
 export interface TracksRefresh {

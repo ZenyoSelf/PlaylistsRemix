@@ -185,7 +185,7 @@ export async function downloadSpotifySong(
     if (!downloadedFile) throw new Error("Could not find downloaded file");
 
     const filePath = path.join(outputDir, downloadedFile);
-
+    console.log("File found:", filePath);
     // Return both the file path and original filename
     return JSON.stringify({
       path: filePath,

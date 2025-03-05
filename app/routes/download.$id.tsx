@@ -4,6 +4,7 @@ import fs from "fs/promises";
 import { downloadSpotifySong } from "~/services/selfApi.server";
 import { getSongById } from "~/services/db.server";
 import { jsonWithError } from "remix-toast";
+import path from "path";
 
 export const loader: LoaderFunction = async ({ params }) => {
   try {
@@ -22,6 +23,24 @@ export const loader: LoaderFunction = async ({ params }) => {
     }
     console.log(song.artist_name)
 
+    // Get directory path
+    const dirPath = path.join(
+      process.cwd(),
+      "tmp",
+      "arnaud",
+      song.playlist || 'default'
+    );
+
+    // List files in directory and find the one we want
+    const files = await fs.readdir(dirPath);
+    const downloadFile = files.find(file => file.includes(song.title!));
+    
+    if (downloadFile) {
+      return jsonWithError({
+        result: "error",
+      }, "File already exists");
+    }
+    
     const result = await downloadSpotifySong(
       song.title!,
       song.artist_name!,
