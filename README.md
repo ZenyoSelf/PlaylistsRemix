@@ -17,6 +17,11 @@ Zenyo's Playlix is a powerful music library manager that allows you to consolida
 - Node.js (v20 or higher)
 - Redis server (for the download queue)
 - SQLite (for the database)
+- External utilities (to be placed in the `app/utils` folder):
+  - ffmpeg.exe
+  - ffplay.exe
+  - ffprobe.exe
+  - yt-dlp.exe
 
 ### Getting Started
 
@@ -33,19 +38,25 @@ cd PlaylistsRemix
 npm install
 ```
 
-3. **Initialize the database**
+3. **Add required utilities**
+
+Download the following utilities and place them in the `app/utils` folder:
+- [ffmpeg, ffplay, ffprobe](https://ffmpeg.org/download.html) - Download the Windows builds
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp/releases) - Download the Windows executable
+
+4. **Initialize the database**
 
 ```bash
 npm run init-db
 ```
 
-4. **Start Redis server (using Docker)**
+5. **Start Redis server (using Docker)**
 
 ```bash
 docker run -d -p 6379:6379 --name playlix-redis redis:alpine
 ```
 
-5. **Start the development server**
+6. **Start the development server**
 
 ```bash
 npm run dev
