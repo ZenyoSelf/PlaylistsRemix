@@ -91,7 +91,14 @@ DONE : Fix downloadmanager to get currently going jobs.
 DONE : Add cron jobs for cleaning files (every 2 days or something)
 DONE : Add a selector next to all platforms, to filter all local files, not downloaded file or all
 
-Add multiple platforms. implement some kind of account manager thing.
+DONE : Add multiple platforms. implement some kind of account manager thing.
 DONE : Implement playlists fetch.
-Fix the multiple playlists thing. Only one track must be shown, even if in multiple playlists.
-Add a new selector for playlists.
+DONE : Fix the multiple playlists thing. Only one track must be shown, even if in multiple playlists.
+DONE : Add a new selector for playlists.
+
+
+TODO THINK : Spotify liked songs limit
+
+Overhaul the populatesongsforuser method : accurate email, fix the youtube forbidden (scope probably), only get music.youtube.com playlists, etc...
+Add 
+Add true auth to the app : user need to create account or get created to access it, so that the user can have different emails for spotify and youtube, while having one email in the DB.

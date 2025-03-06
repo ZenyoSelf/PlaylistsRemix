@@ -1,1 +1,1 @@
-select * from song where local = 1;
+DELETE FROM song where user = 'arnaudsoltermann@gmail.com';

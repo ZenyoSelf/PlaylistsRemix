@@ -1,5 +1,5 @@
 import sqlite3 from 'sqlite3';
-import { open } from "sqlite";
+import { open, Database } from "sqlite";
 import { getProviderAccessToken, isAuthenticatedWithProvider, getProviderSession } from "./auth.server";
 import { getLikedSongsSpotify, getAllUserPlaylistsSpotify, getPlaylistTracksSpotify } from "./selfApi.server";
 import { getAllUserPlaylistsYouTube, getPlaylistVideosYouTube, convertYouTubeItemsToSongs, getLikedVideosYouTube } from "./youtubeApi.server";
@@ -8,6 +8,22 @@ import path from "path";
 import { Song } from '~/types/customs';
 import fs from 'fs/promises';
 import { ToastMessage } from 'remix-toast';
+
+// Define types for database records
+interface SongRecord {
+  id: number;
+  title: string;
+  artist_name: string; // JSON string
+  album: string | null;
+  album_image: string | null;
+  playlist: string | null; // JSON string
+  platform: string;
+  url: string;
+  downloaded: number; // SQLite stores booleans as 0/1
+  local: number;
+  platform_added_at: string;
+  user: string;
+}
 
 // Initialize database connection
 export async function getDb() {
@@ -159,15 +175,17 @@ export async function getUserSongsFromDB(
 ) {
   const db = await getDb();
   
-  // Try to get session from either provider
+  // Try to get session from both providers
   const spotifySession = await getProviderSession(request, "spotify");
   const youtubeSession = await getProviderSession(request, "youtube");
   
-  // Use the first available session
-  const userEmail = spotifySession?.email || youtubeSession?.email || '';
+  // Get emails from both sessions if available
+  const spotifyEmail = spotifySession?.email || '';
+  const youtubeEmail = youtubeSession?.email || '';
   
-  if (!userEmail) {
-    throw new Error("User not authenticated");
+  // Check if at least one provider is authenticated
+  if (!spotifyEmail && !youtubeEmail) {
+    throw new Error("User not authenticated with any provider");
   }
   
   const {
@@ -184,8 +202,20 @@ export async function getUserSongsFromDB(
   const offset = (page - 1) * itemsPerPage;
 
   // Build the WHERE clause dynamically
-  const whereConditions = ['user = ?'];
-  const params: Array<string | number> = [userEmail];
+  const whereConditions = [];
+  const params: Array<string | number> = [];
+  
+  // Handle user condition - fetch songs from both accounts if available
+  if (spotifyEmail && youtubeEmail) {
+    whereConditions.push('(user = ? OR user = ?)');
+    params.push(spotifyEmail, youtubeEmail);
+  } else if (spotifyEmail) {
+    whereConditions.push('user = ?');
+    params.push(spotifyEmail);
+  } else {
+    whereConditions.push('user = ?');
+    params.push(youtubeEmail);
+  }
 
   if (search) {
     whereConditions.push('(title LIKE ? OR artist_name LIKE ?)');
@@ -243,7 +273,117 @@ export async function getUserSongsFromDB(
   };
 }
 
+/**
+ * Refresh Spotify library for a user
+ * @param request Request object
+ * @returns Object with songs and total count
+ */
+export async function refreshSpotifyLibrary(request: Request) {
+  const db = await getDb();
+  const isSpotifyAuthenticated = await isAuthenticatedWithProvider(request, "spotify");
+  
+  if (!isSpotifyAuthenticated) {
+    throw new Error("User not authenticated with Spotify");
+  }
+  
+  const spotifySession = await getProviderSession(request, "spotify");
+  const userEmail = spotifySession?.email || '';
+  const latestRefresh = await getLatestRefresh(userEmail);
+  
+  // Begin transaction
+  await db.run('BEGIN TRANSACTION');
+  
+  try {
+    const spotifyAccessToken = await getProviderAccessToken(request, "spotify");
+    
+    if (!spotifyAccessToken) {
+      throw new Error("Failed to get Spotify access token");
+    }
+    
+    // Process Spotify library
+    const total = await processSpotifyLibrary(spotifyAccessToken, db, userEmail, latestRefresh);
+    
+    // Update the last refresh timestamp
+    await db.run("UPDATE user SET last_refresh = ? WHERE user = ?", [
+      new Date().toISOString(),
+      userEmail,
+    ]);
+    
+    // Commit transaction
+    await db.run('COMMIT');
+    
+    // Get the updated songs from DB
+    const userSongs = await getUserSongsFromDB(request, {
+      page: 1,
+      itemsPerPage: 10
+    });
+    
+    return {
+      songs: userSongs.songs,
+      total
+    };
+  } catch (error) {
+    // Rollback transaction in case of error
+    await db.run('ROLLBACK');
+    console.error("Error refreshing Spotify library:", error);
+    throw error;
+  }
+}
 
+/**
+ * Refresh YouTube library for a user
+ * @param request Request object
+ * @returns Object with songs and total count
+ */
+export async function refreshYoutubeLibrary(request: Request) {
+  const db = await getDb();
+  const isYoutubeAuthenticated = await isAuthenticatedWithProvider(request, "youtube");
+  
+  if (!isYoutubeAuthenticated) {
+    throw new Error("User not authenticated with YouTube");
+  }
+  
+  const youtubeSession = await getProviderSession(request, "youtube");
+  const userEmail = youtubeSession?.email || '';
+  
+  // Begin transaction
+  await db.run('BEGIN TRANSACTION');
+  
+  try {
+    const youtubeAccessToken = await getProviderAccessToken(request, "youtube");
+    
+    if (!youtubeAccessToken) {
+      throw new Error("Failed to get YouTube access token");
+    }
+    
+    console.log(`Refreshing YouTube library for user: ${userEmail}`);
+    console.log(`Access token available: ${!!youtubeAccessToken}`);
+    
+    // Process YouTube library
+    const total = await processYouTubeLibrary(youtubeAccessToken, db, userEmail);
+    
+    // Commit transaction
+    await db.run('COMMIT');
+    
+    console.log(`Successfully processed ${total} YouTube items`);
+    
+    // Get the updated songs from DB
+    const userSongs = await getUserSongsFromDB(request, {
+      page: 1,
+      itemsPerPage: 10
+    });
+    
+    return {
+      songs: userSongs.songs,
+      total
+    };
+  } catch (error) {
+    // Rollback transaction in case of error
+    await db.run('ROLLBACK');
+    console.error("Error refreshing YouTube library:", error);
+    throw error;
+  }
+}
 
 export async function populateSongsForUser(request: Request) {
   const db = await getDb();
@@ -256,268 +396,190 @@ export async function populateSongsForUser(request: Request) {
     throw new Error("User not authenticated with any provider");
   }
   
-  // Determine which provider to use
-  const provider = isSpotifyAuthenticated ? "spotify" : "youtube";
+  // Get user email - we'll use the first available provider for this
+  let userEmailSpotify = "";
+  let userEmailYoutube = "";
   
-  // Get access token for the active provider
-  const accessToken = await getProviderAccessToken(request, provider);
-  
-  if (!accessToken) {
-    throw new Error("No access token available");
-  }
-  
-  // Get user email from session
-  let userEmail = "";
-  if (provider === "spotify") {
+  if (isSpotifyAuthenticated) {
     const spotifySession = await getProviderSession(request, "spotify");
-    userEmail = spotifySession?.email || "";
-  } else {
+    userEmailSpotify = spotifySession?.email || "";
+  } 
+  if (isYoutubeAuthenticated) {
     const youtubeSession = await getProviderSession(request, "youtube");
-    userEmail = youtubeSession?.email || "";
-  }
-  
-  if (!userEmail) {
-    throw new Error("No user email available");
+    userEmailYoutube = youtubeSession?.email || "";
   }
   
   // Store user in database if not exists
-  await db.run("INSERT OR IGNORE INTO user (user, last_refresh) VALUES (?, ?)", [
-    userEmail,
-    new Date().toISOString(),
-  ]);
+  if (userEmailSpotify) {
+    await db.run("INSERT OR IGNORE INTO user (user, last_refresh) VALUES (?, ?)", [
+      userEmailSpotify,
+      new Date().toISOString(),
+    ]);
+  }
   
-  // Update last refresh time
-  await db.run("UPDATE user SET last_refresh = ? WHERE user = ?", [
-    new Date().toISOString(),
-    userEmail,
-  ]);
-  
-  let songs: Song[] = [];
+  const songs: Song[] = [];
   let toast: ToastMessage = { type: "success", message: "Songs refreshed successfully!" };
   let total = 0;
   
   try {
-    if (provider === "spotify") {
-      // Existing Spotify code - we'll keep this part as is
-      const latestRefresh = await getLatestRefresh(userEmail);
+    // Begin transaction
+    await db.run('BEGIN TRANSACTION');
+    
+    // Process Spotify if authenticated
+    if (isSpotifyAuthenticated && userEmailSpotify) {
+      const spotifyAccessToken = await getProviderAccessToken(request, "spotify");
       
-      // Begin transaction
-      await db.run('BEGIN TRANSACTION');
+      if (spotifyAccessToken) {
+        const latestRefresh = await getLatestRefresh(userEmailSpotify);
+        total += await processSpotifyLibrary(spotifyAccessToken, db, userEmailSpotify, latestRefresh);
+      }
+    }
+    
+    // Process YouTube if authenticated
+    if (isYoutubeAuthenticated && userEmailYoutube) {
+      const youtubeAccessToken = await getProviderAccessToken(request, "youtube");
       
-      // 1. Process liked songs
-      const likedsongs = await getLikedSongsSpotify(0, 50, accessToken);
-      
-      if (likedsongs) {
-        const likedItems = likedsongs.items.filter(
-          (t) => new Date(t.added_at) > new Date(latestRefresh)
-        );
-        
-        if (likedItems && likedItems.length > 0) {
-          for (const item of likedItems) {
-            const artist_name = JSON.stringify(item.track.artists.map((t) => t.name));
-            const playlistArray = JSON.stringify(["SpotifyLikedSongs"]);
-            
-            await db.run(
-              `INSERT INTO song 
-              (artist_name, downloaded, title, album, album_image, user, playlist, platform, url, platform_added_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                artist_name,
-                0,
-                item.track.name,
-                item.track.album.name,
-                item.track.album.images[0]?.url || '',
-                userEmail,
-                playlistArray,
-                "Spotify",
-                item.track.uri,
-                new Date(item.added_at).toISOString()
-              ]
-            );
-            total++;
-          }
+      if (youtubeAccessToken) {
+        try {
+          total += await processYouTubeLibrary(youtubeAccessToken, db, userEmailYoutube);
+        } catch (error) {
+          console.error("Error processing YouTube library:", error);
+          toast = { type: "error", message: "Error fetching YouTube videos. Spotify content was processed successfully." };
         }
       }
-      
-      // 2. Process all user playlists
-      const playlists = await getAllUserPlaylistsSpotify(accessToken);
-      
-      for (const playlist of playlists) {
-        console.log(`Processing playlist: ${playlist.name}`);
-        
-        const playlistTracks = await getPlaylistTracksSpotify(accessToken, playlist.id);
-        
-        if (playlistTracks && playlistTracks.items.length > 0) {
-          for (const item of playlistTracks.items) {
-            // Check if this track was added after the latest refresh
-            if (new Date(item.added_at) > new Date(latestRefresh)) {
-              const artist_name = JSON.stringify(item.track.artists.map((t) => t.name));
-              
-              // Check if this track already exists in the database
-              const existingSong = await db.get(
-                `SELECT id, playlist FROM song WHERE url = ? AND user = ?`,
-                [item.track.uri, userEmail]
-              );
-              
-              if (existingSong) {
-                // Track exists, update the playlist array to include this playlist
-                const existingPlaylists = JSON.parse(existingSong.playlist || '[]');
-                if (!existingPlaylists.includes(playlist.name)) {
-                  existingPlaylists.push(playlist.name);
-                  await db.run(
-                    `UPDATE song SET playlist = ? WHERE id = ?`,
-                    [JSON.stringify(existingPlaylists), existingSong.id]
-                  );
-                }
-              } else {
-                // Track doesn't exist, insert new record
-                const playlistArray = JSON.stringify([playlist.name]);
-                
-                await db.run(
-                  `INSERT INTO song 
-                  (artist_name, downloaded, title, album, album_image, user, playlist, platform, url, platform_added_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                  [
-                    artist_name,
-                    0,
-                    item.track.name,
-                    item.track.album.name,
-                    item.track.album.images[0]?.url || '',
-                    userEmail,
-                    playlistArray,
-                    "Spotify",
-                    item.track.uri,
-                    new Date(item.added_at).toISOString()
-                  ]
-                );
-                total++;
-              }
-            }
-          }
-        }
-      }
-      
-      // Commit transaction
-      await db.run('COMMIT');
-      
-    } else if (provider === "youtube") {
-      // Get all YouTube playlists
-      const playlists = await getAllUserPlaylistsYouTube(accessToken);
-      
-      // Process each playlist
-      for (const playlist of playlists) {
-        const playlistName = playlist.snippet.title;
-        const playlistId = playlist.id;
-        
-        // Get all videos in the playlist
-        const videos = await getPlaylistVideosYouTube(accessToken, playlistId);
-        
-        // Convert videos to Song format
-        const playlistSongs = convertYouTubeItemsToSongs(videos, playlistName);
-        
-        // Add songs to the database
-        for (const song of playlistSongs) {
-          const existingSong = await db.get(
-            "SELECT * FROM song WHERE title = ? AND platform = ? AND user = ?",
-            [song.title, song.platform, userEmail]
-          );
-          
-          if (!existingSong) {
-            await db.run(
-              "INSERT INTO song (title, artist_name, album, album_image, playlist, platform, url, downloaded, local, platform_added_at, user) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              [
-                song.title,
-                JSON.stringify(song.artist_name),
-                song.album,
-                song.album_image,
-                JSON.stringify(song.playlist),
-                song.platform,
-                song.url,
-                song.downloaded ? 1 : 0,
-                song.local ? 1 : 0,
-                song.platform_added_at,
-                userEmail,
-              ]
-            );
-            total++;
-          } else {
-            // Update existing song's playlist array if needed
-            const existingPlaylists = JSON.parse(existingSong.playlist || "[]");
-            if (!existingPlaylists.includes(playlistName)) {
-              existingPlaylists.push(playlistName);
-              await db.run(
-                "UPDATE song SET playlist = ? WHERE id = ?",
-                [JSON.stringify(existingPlaylists), existingSong.id]
-              );
-            }
-          }
-        }
-        
-        songs = songs.concat(playlistSongs);
-      }
-      
-      // Get liked videos
-      try {
-        const likedVideos = await getLikedVideosYouTube(accessToken);
-        const likedSongs = convertYouTubeItemsToSongs(likedVideos, "Liked Videos");
-        
-        // Add liked songs to the database
-        for (const song of likedSongs) {
-          const existingSong = await db.get(
-            "SELECT * FROM song WHERE title = ? AND platform = ? AND user = ?",
-            [song.title, song.platform, userEmail]
-          );
-          
-          if (!existingSong) {
-            await db.run(
-              "INSERT INTO song (title, artist_name, album, album_image, playlist, platform, url, downloaded, local, platform_added_at, user) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              [
-                song.title,
-                JSON.stringify(song.artist_name),
-                song.album,
-                song.album_image,
-                JSON.stringify(song.playlist),
-                song.platform,
-                song.url,
-                song.downloaded ? 1 : 0,
-                song.local ? 1 : 0,
-                song.platform_added_at,
-                userEmail,
-              ]
-            );
-            total++;
-          } else {
-            // Update existing song's playlist array if needed
-            const existingPlaylists = JSON.parse(existingSong.playlist || "[]");
-            if (!existingPlaylists.includes("Liked Videos")) {
-              existingPlaylists.push("Liked Videos");
-              await db.run(
-                "UPDATE song SET playlist = ? WHERE id = ?",
-                [JSON.stringify(existingPlaylists), existingSong.id]
-              );
-            }
-          }
-        }
-        
-        songs = songs.concat(likedSongs);
-      } catch (error) {
-        console.error("Error fetching liked videos:", error);
-        toast = { type: "error", message: "Error fetching liked videos. Other playlists were processed successfully." };
-      }
+    }
+    
+    // Commit transaction
+    await db.run('COMMIT');
+    
+    // Update the last refresh timestamp for Spotify user
+    if (userEmailSpotify) {
+      await db.run("UPDATE user SET last_refresh = ? WHERE user = ?", [
+        new Date().toISOString(),
+        userEmailSpotify,
+      ]);
     }
     
     return { songs, toast, total };
   } catch (error) {
+    // Rollback transaction in case of error
+    await db.run('ROLLBACK');
+    
     console.error("Error populating songs:", error);
     toast = { type: "error", message: "Error refreshing songs. Please try again." };
     return { songs, toast, total };
   }
 }
 
+
+
+
 export async function getSongById(id: string): Promise<Song | null> {
   const db = await getDb();
   const song = await db.get("SELECT * FROM song WHERE id = ?", id);
   return song || null;
+}
+
+export async function handleSpotifyTracks(spotifyAccessToken: string, db: sqlite3.Database, userEmail: string, latestRefresh: string) {
+  if (spotifyAccessToken) {
+    // 1. Process liked songs
+    const likedsongs = await getLikedSongsSpotify(0, 50, spotifyAccessToken);
+    await db.run('BEGIN TRANSACTION');
+    if (likedsongs) {
+      const likedItems = likedsongs.items.filter(
+        (t) => new Date(t.added_at) > new Date(latestRefresh)
+      );
+      
+      if (likedItems && likedItems.length > 0) {
+        for (const item of likedItems) {
+          const artist_name = JSON.stringify(item.track.artists.map((t) => t.name));
+          const playlistArray = JSON.stringify(["SpotifyLikedSongs"]);
+          
+          await db.run(
+            `INSERT INTO song 
+            (artist_name, downloaded, title, album, album_image, user, playlist, platform, url, platform_added_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              artist_name,
+              0,
+              item.track.name,
+              item.track.album.name,
+              item.track.album.images[0]?.url || '',
+              userEmail,
+              playlistArray,
+              "Spotify",
+              item.track.uri,
+              new Date(item.added_at).toISOString()
+            ]
+          );
+        }
+      }
+    }
+    
+    // 2. Process all user playlists
+    const playlists = await getAllUserPlaylistsSpotify(spotifyAccessToken);
+    
+    for (const playlist of playlists) {
+      console.log(`Processing Spotify playlist: ${playlist.name}`);
+      
+      const playlistTracks = await getPlaylistTracksSpotify(spotifyAccessToken, playlist.id);
+      
+      if (playlistTracks && playlistTracks.items.length > 0) {
+        for (const item of playlistTracks.items) {
+          // Check if this track was added after the latest refresh
+          if (new Date(item.added_at) > new Date(latestRefresh)) {
+            const artist_name = JSON.stringify(item.track.artists.map((t) => t.name));
+            
+            // Check if this track already exists in the database
+            const existingSongResult = await db.get(
+              `SELECT id, playlist FROM song WHERE url = ? AND user = ?`,
+              [item.track.uri, userEmail]
+            );
+            
+            // Use type checking to ensure we have a valid song record
+            const existingSong = existingSongResult && 
+                                typeof existingSongResult === 'object' && 
+                                'id' in existingSongResult && 
+                                'playlist' in existingSongResult ? 
+                                existingSongResult : null;
+            
+            if (existingSong) {
+              // Track exists, update the playlist array to include this playlist
+              const existingPlaylists = JSON.parse(existingSong.playlist as string || '[]');
+              if (!existingPlaylists.includes(playlist.name)) {
+                existingPlaylists.push(playlist.name);
+                await db.run(
+                  `UPDATE song SET playlist = ? WHERE id = ?`,
+                  [JSON.stringify(existingPlaylists), existingSong.id]
+                );
+              }
+            } else {
+              // Track doesn't exist, insert new record
+              const playlistArray = JSON.stringify([playlist.name]);
+              
+              await db.run(
+                `INSERT INTO song 
+                (artist_name, downloaded, title, album, album_image, user, playlist, platform, url, platform_added_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  artist_name,
+                  0,
+                  item.track.name,
+                  item.track.album.name,
+                  item.track.album.images[0]?.url || '',
+                  userEmail,
+                  playlistArray,
+                  "Spotify",
+                  item.track.uri,
+                  new Date(item.added_at).toISOString()
+                ]
+              );
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 export async function removeDuplicateTracks() {
@@ -656,16 +718,45 @@ export async function getAllPlaylists(userEmail: string) {
 }
 
 /**
- * Get all filter options (platforms and playlists) for a specific user
+ * Get all filter options (platforms and playlists) for a specific user or users
  */
-export async function getFilters(userEmail: string) {
+export async function getFilters(request: Request) {
   try {
-    const platforms = await getAllPlatforms(userEmail);
-    const playlists = await getAllPlaylists(userEmail);
+    // Try to get session from both providers
+    const spotifySession = await getProviderSession(request, "spotify");
+    const youtubeSession = await getProviderSession(request, "youtube");
+    
+    // Get emails from both sessions if available
+    const spotifyEmail = spotifySession?.email || '';
+    const youtubeEmail = youtubeSession?.email || '';
+    
+    // Check if at least one provider is authenticated
+    if (!spotifyEmail && !youtubeEmail) {
+      throw new Error("User not authenticated with any provider");
+    }
+    
+    let platforms: string[] = [];
+    let playlists: string[] = [];
+    
+    // Get platforms and playlists for Spotify user
+    if (spotifyEmail) {
+      platforms = platforms.concat(await getAllPlatforms(spotifyEmail));
+      playlists = playlists.concat(await getAllPlaylists(spotifyEmail));
+    }
+    
+    // Get platforms and playlists for YouTube user
+    if (youtubeEmail) {
+      platforms = platforms.concat(await getAllPlatforms(youtubeEmail));
+      playlists = playlists.concat(await getAllPlaylists(youtubeEmail));
+    }
+    
+    // Remove duplicates
+    const uniquePlatforms = [...new Set(platforms)];
+    const uniquePlaylists = [...new Set(playlists)];
     
     return {
-      platforms,
-      playlists
+      platforms: uniquePlatforms,
+      playlists: uniquePlaylists.sort()
     };
   } catch (error) {
     console.error("Error fetching filters:", error);
@@ -673,5 +764,414 @@ export async function getFilters(userEmail: string) {
       platforms: [],
       playlists: []
     };
+  }
+}
+
+/**
+ * Process Spotify library for a user - fetches liked songs and playlists
+ * @param accessToken Spotify access token
+ * @param db Database connection
+ * @param userEmail User's email
+ * @param latestRefresh Latest refresh timestamp
+ * @returns Number of tracks added
+ */
+export async function processSpotifyLibrary(accessToken: string, db: Database, userEmail: string, latestRefresh: string) {
+  let total = 0;
+  
+  try {
+    // 1. Process liked songs
+    total += await processSpotifyLikedSongs(accessToken, db, userEmail, latestRefresh);
+    
+    // 2. Process all user playlists
+    total += await processSpotifyPlaylists(accessToken, db, userEmail, latestRefresh);
+    
+    return total;
+  } catch (error) {
+    console.error("Error processing Spotify library:", error);
+    throw error;
+  }
+}
+
+/**
+ * Process Spotify liked songs
+ * @param accessToken Spotify access token
+ * @param db Database connection
+ * @param userEmail User's email
+ * @param latestRefresh Latest refresh timestamp
+ * @returns Number of tracks added
+ */
+export async function processSpotifyLikedSongs(accessToken: string, db: Database, userEmail: string, latestRefresh: string) {
+  let total = 0;
+  
+  try {
+    const likedsongs = await getLikedSongsSpotify(0, 50, accessToken);
+    
+    if (likedsongs) {
+      const likedItems = likedsongs.items.filter(
+        (t) => new Date(t.added_at) > new Date(latestRefresh)
+      );
+      
+      if (likedItems && likedItems.length > 0) {
+        for (const item of likedItems) {
+          const artist_name = JSON.stringify(item.track.artists.map((t) => t.name));
+          const playlistArray = JSON.stringify(["SpotifyLikedSongs"]);
+          
+          await db.run(
+            `INSERT INTO song 
+            (artist_name, downloaded, title, album, album_image, user, playlist, platform, url, platform_added_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              artist_name,
+              0,
+              item.track.name,
+              item.track.album.name,
+              item.track.album.images[0]?.url || '',
+              userEmail,
+              playlistArray,
+              "Spotify",
+              item.track.uri,
+              new Date(item.added_at).toISOString()
+            ]
+          );
+          total++;
+        }
+      }
+    }
+    
+    return total;
+  } catch (error) {
+    console.error("Error processing Spotify liked songs:", error);
+    throw error;
+  }
+}
+
+/**
+ * Process Spotify playlists
+ * @param accessToken Spotify access token
+ * @param db Database connection
+ * @param userEmail User's email
+ * @param latestRefresh Latest refresh timestamp
+ * @returns Number of tracks added
+ */
+export async function processSpotifyPlaylists(accessToken: string, db: Database, userEmail: string, latestRefresh: string) {
+  let total = 0;
+  
+  try {
+    const playlists = await getAllUserPlaylistsSpotify(accessToken);
+    
+    for (const playlist of playlists) {
+      console.log(`Processing Spotify playlist: ${playlist.name}`);
+      
+      const playlistTracks = await getPlaylistTracksSpotify(accessToken, playlist.id);
+      
+      if (playlistTracks && playlistTracks.items.length > 0) {
+        for (const item of playlistTracks.items) {
+          // Check if this track was added after the latest refresh
+          if (new Date(item.added_at) > new Date(latestRefresh)) {
+            const artist_name = JSON.stringify(item.track.artists.map((t) => t.name));
+            
+            // Check if this track already exists in the database
+            const existingSongResult = await db.get(
+              `SELECT id, playlist FROM song WHERE url = ? AND user = ?`,
+              [item.track.uri, userEmail]
+            );
+            
+            // Use type checking to ensure we have a valid song record
+            const existingSong = existingSongResult && 
+                                typeof existingSongResult === 'object' && 
+                                'id' in existingSongResult && 
+                                'playlist' in existingSongResult ? 
+                                existingSongResult : null;
+            
+            if (existingSong) {
+              // Track exists, update the playlist array to include this playlist
+              const existingPlaylists = JSON.parse(existingSong.playlist as string || '[]');
+              if (!existingPlaylists.includes(playlist.name)) {
+                existingPlaylists.push(playlist.name);
+                await db.run(
+                  `UPDATE song SET playlist = ? WHERE id = ?`,
+                  [JSON.stringify(existingPlaylists), existingSong.id]
+                );
+              }
+            } else {
+              // Track doesn't exist, insert new record
+              const playlistArray = JSON.stringify([playlist.name]);
+              
+              await db.run(
+                `INSERT INTO song 
+                (artist_name, downloaded, title, album, album_image, user, playlist, platform, url, platform_added_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  artist_name,
+                  0,
+                  item.track.name,
+                  item.track.album.name,
+                  item.track.album.images[0]?.url || '',
+                  userEmail,
+                  playlistArray,
+                  "Spotify",
+                  item.track.uri,
+                  new Date(item.added_at).toISOString()
+                ]
+              );
+              total++;
+            }
+          }
+        }
+      }
+    }
+    
+    return total;
+  } catch (error) {
+    console.error("Error processing Spotify playlists:", error);
+    throw error;
+  }
+}
+
+/**
+ * Process YouTube library for a user - fetches playlists and liked videos
+ * @param accessToken YouTube access token
+ * @param db Database connection
+ * @param userEmail User's email
+ * @returns Number of tracks added
+ */
+export async function processYouTubeLibrary(accessToken: string, db: Database, userEmail: string) {
+  let total = 0;
+  const errors: string[] = [];
+  
+  try {
+    // Process YouTube playlists only (skip liked videos)
+    try {
+      total += await processYouTubePlaylists(accessToken, db, userEmail);
+    } catch (e) {
+      console.error("Error processing YouTube playlists:", e);
+      errors.push(`Playlists error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    
+    // We're skipping liked videos processing as requested
+    // No longer calling processYouTubeLikedVideos
+    
+    if (errors.length > 0) {
+      if (total > 0) {
+        // Some content was processed successfully
+        console.warn(`YouTube library processed with errors: ${errors.join('; ')}`);
+      } else {
+        // Nothing was processed successfully
+        throw new Error(`Failed to process YouTube content: ${errors.join('; ')}`);
+      }
+    }
+    
+    return total;
+  } catch (error) {
+    console.error("Error processing YouTube library:", error);
+    throw error;
+  }
+}
+
+/**
+ * Process YouTube playlists
+ * @param accessToken YouTube access token
+ * @param db Database connection
+ * @param userEmail User's email
+ * @returns Number of tracks added
+ */
+export async function processYouTubePlaylists(accessToken: string, db: Database, userEmail: string) {
+  let total = 0;
+  
+  try {
+    // Get all YouTube playlists
+    const playlists = await getAllUserPlaylistsYouTube(accessToken);
+    
+    // Process each playlist
+    for (const playlist of playlists) {
+      const playlistName = playlist.snippet.title;
+      const playlistId = playlist.id;
+      
+      console.log(`Processing YouTube playlist: ${playlistName}`);
+      
+      // Get all videos in the playlist
+      const videos = await getPlaylistVideosYouTube(accessToken, playlistId);
+      
+      // Convert videos to Song format with improved artist extraction
+      const playlistSongs = convertYouTubeItemsToSongs(videos, playlistName);
+      
+      // Add songs to the database
+      for (const song of playlistSongs) {
+        // Check if song already exists by URL instead of title
+        // This is more reliable since the title might change with our improved extraction
+        const videoId = song.url.split('v=')[1];
+        const existingSongResult = await db.get(
+          "SELECT * FROM song WHERE url LIKE ? AND user = ?",
+          [`%${videoId}%`, userEmail]
+        );
+        
+        // Use type checking to ensure we have a valid song record
+        const existingSong = existingSongResult && 
+                            typeof existingSongResult === 'object' && 
+                            'id' in existingSongResult && 
+                            'playlist' in existingSongResult && 
+                            'artist_name' in existingSongResult && 
+                            'title' in existingSongResult ? 
+                            existingSongResult : null;
+        
+        if (!existingSong) {
+          await db.run(
+            "INSERT INTO song (title, artist_name, album, album_image, playlist, platform, url, downloaded, local, platform_added_at, user) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+              song.title,
+              JSON.stringify(song.artist_name || []),
+              song.album,
+              song.album_image,
+              JSON.stringify(song.playlist || []),
+              song.platform,
+              song.url,
+              song.downloaded ? 1 : 0,
+              song.local ? 1 : 0,
+              song.platform_added_at,
+              userEmail,
+            ]
+          );
+          console.log(`Added new YouTube song: "${song.title}" by ${(song.artist_name || []).join(', ')}`);
+          total++;
+        } else {
+          // Update existing song's playlist array if needed
+          const existingPlaylists = JSON.parse(existingSong.playlist as string || "[]");
+          if (!existingPlaylists.includes(playlistName)) {
+            existingPlaylists.push(playlistName);
+            await db.run(
+              "UPDATE song SET playlist = ? WHERE id = ?",
+              [JSON.stringify(existingPlaylists), existingSong.id]
+            );
+          }
+          
+          // Update the artist information if we have better data now
+          const existingArtists = JSON.parse(existingSong.artist_name as string || "[]");
+          const newArtists = song.artist_name || [];
+          
+          // Determine if we should update the artist information
+          let shouldUpdateArtist = false;
+          
+          // Case 1: Existing artist is the channel name but we extracted a better artist
+          if (existingArtists.length === 1 && 
+              existingArtists[0] === playlist.snippet.channelTitle && 
+              newArtists.length > 0 && 
+              newArtists[0] !== playlist.snippet.channelTitle &&
+              newArtists[0] !== "Unknown Artist") {
+            shouldUpdateArtist = true;
+          }
+          
+          // Case 2: Existing artist is "Unknown Artist" but we have a better artist now
+          if (existingArtists.length === 1 && 
+              existingArtists[0] === "Unknown Artist" && 
+              newArtists.length > 0 && 
+              newArtists[0] !== "Unknown Artist") {
+            shouldUpdateArtist = true;
+          }
+          
+          // Case 3: Existing artist looks like a username (matches our patterns)
+          const userAccountPatterns = [
+            /^user\d+$/i,
+            /^\w+\d+$/i,
+            /^[a-z0-9_]+$/i,
+            /^populodaddy$/i,
+            /^my\s*channel$/i,
+            /^official\s*channel$/i,
+          ];
+          
+          if (existingArtists.length === 1 && 
+              userAccountPatterns.some(pattern => pattern.test(existingArtists[0])) &&
+              newArtists.length > 0 && 
+              newArtists[0] !== existingArtists[0] &&
+              newArtists[0] !== "Unknown Artist") {
+            shouldUpdateArtist = true;
+          }
+          
+          if (shouldUpdateArtist) {
+            // We have better artist information now
+            await db.run(
+              "UPDATE song SET artist_name = ?, title = ? WHERE id = ?",
+              [JSON.stringify(newArtists), song.title, existingSong.id]
+            );
+            console.log(`Updated artist for "${song.title}" from "${existingArtists.join(', ')}" to "${newArtists.join(', ')}"`);
+            
+            // Also update the title if it's different and looks better
+            if (song.title && existingSong.title && 
+                song.title !== existingSong.title && 
+                !song.title.includes("(") && 
+                existingSong.title.includes("(")) {
+              await db.run(
+                "UPDATE song SET title = ? WHERE id = ?",
+                [song.title, existingSong.id]
+              );
+              console.log(`Updated title from "${existingSong.title}" to "${song.title}"`);
+            }
+          }
+        }
+      }
+    }
+    
+    return total;
+  } catch (error) {
+    console.error("Error processing YouTube playlists:", error);
+    throw error;
+  }
+}
+
+/**
+ * Process YouTube liked videos
+ * @param accessToken YouTube access token
+ * @param db Database connection
+ * @param userEmail User's email
+ * @returns Number of tracks added
+ */
+export async function processYouTubeLikedVideos(accessToken: string, db: Database, userEmail: string) {
+  let total = 0;
+  
+  try {
+    const likedVideos = await getLikedVideosYouTube(accessToken);
+    const likedSongs = convertYouTubeItemsToSongs(likedVideos, "Liked Videos");
+    
+    // Add liked songs to the database
+    for (const song of likedSongs) {
+      const existingSong = await db.get(
+        "SELECT * FROM song WHERE title = ? AND platform = ? AND user = ?",
+        [song.title, song.platform, userEmail]
+      ) as { id: number; playlist: string } | undefined;
+      
+      if (!existingSong) {
+        await db.run(
+          "INSERT INTO song (title, artist_name, album, album_image, playlist, platform, url, downloaded, local, platform_added_at, user) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            song.title,
+            JSON.stringify(song.artist_name),
+            song.album,
+            song.album_image,
+            JSON.stringify(song.playlist),
+            song.platform,
+            song.url,
+            song.downloaded ? 1 : 0,
+            song.local ? 1 : 0,
+            song.platform_added_at,
+            userEmail,
+          ]
+        );
+        total++;
+      } else {
+        // Update existing song's playlist array if needed
+        const existingPlaylists = JSON.parse(existingSong.playlist || "[]");
+        if (!existingPlaylists.includes("Liked Videos")) {
+          existingPlaylists.push("Liked Videos");
+          await db.run(
+            "UPDATE song SET playlist = ? WHERE id = ?",
+            [JSON.stringify(existingPlaylists), existingSong.id]
+          );
+        }
+      }
+    }
+    
+    return total;
+  } catch (error) {
+    console.error("Error processing YouTube liked videos:", error);
+    throw error;
   }
 }

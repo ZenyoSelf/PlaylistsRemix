@@ -1,6 +1,6 @@
 import { ActionFunctionArgs, json, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSearchParams, Form, useNavigation } from "@remix-run/react";
-import { getUserSongsFromDB, populateSongsForUser, getFilters } from "~/services/db.server";
+import { getUserSongsFromDB, populateSongsForUser, getFilters, refreshSpotifyLibrary, refreshYoutubeLibrary } from "~/services/db.server";
 import { getProviderSession } from "~/services/auth.server";
 import { Song } from "~/types/customs";
 import {
@@ -20,7 +20,7 @@ import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, Pagi
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
-import { RefreshCw, Loader, CheckCircle, ChevronFirst, ChevronLast } from "lucide-react";
+import { Loader, CheckCircle, ChevronFirst, ChevronLast } from "lucide-react";
 import { jsonWithError, jsonWithSuccess } from "remix-toast";
 import { getTotalLikedSongsSpotify } from "~/services/selfApi.server";
 import { useState } from "react";
@@ -68,10 +68,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     sortDirection: sortDirection as "desc" | "asc"
   });
 
-  // Get filter options (platforms and playlists)
-  const session = await getProviderSession(request, "spotify");
-  const userEmail = session?.user?.email || '';
-  const filterOptions = await getFilters(userEmail);
+  // Get filter options (platforms and playlists) from all authenticated accounts
+  const filterOptions = await getFilters(request);
 
   const response: LoaderData = {
     songs: songsResult.songs,
@@ -122,7 +120,54 @@ export async function action({
         error instanceof Error ? error.message : "Failed to sync library"
       );
     }
+  } else if (action == "refresh_spotify") {
+    try {
+      const result = await refreshSpotifyLibrary(request);
+      
+      return jsonWithSuccess(
+        {
+          songs: result.songs,
+          total: result.total
+        },
+        "Successfully refreshed Spotify library"
+      );
+    } catch (error) {
+      return jsonWithError(
+        {
+          songs: [],
+          total: 0
+        },
+        error instanceof Error ? error.message : "Failed to sync Spotify library"
+      );
+    }
+  } else if (action == "refresh_youtube") {
+    try {
+      const result = await refreshYoutubeLibrary(request);
+      
+      return jsonWithSuccess(
+        {
+          songs: result.songs,
+          total: result.total
+        },
+        "Successfully refreshed YouTube playlists"
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to sync YouTube playlists";
+      const isAuthError = errorMessage.includes("Unauthorized") || errorMessage.includes("authentication");
+      
+      return jsonWithError(
+        {
+          songs: [],  
+          total: 0
+        },
+        isAuthError 
+          ? "YouTube authentication failed. Please go to the Account Manager and reconnect your YouTube account." 
+          : errorMessage
+      );
+    }
   }
+  
+  return null;
 }
 
 export default function Updates() {
@@ -130,6 +175,16 @@ export default function Updates() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigation = useNavigation();
   const [downloadingSongs] = useState<Set<string>>(new Set());
+  
+  // Check if a specific action is submitting
+  const isSubmittingAction = (actionValue: string) => {
+    if (navigation.state !== "submitting") return false;
+    const formData = navigation.formData;
+    return formData && formData.get("action") === actionValue;
+  };
+  
+  const isRefreshingSpotify = isSubmittingAction("refresh_spotify");
+  const isRefreshingYoutube = isSubmittingAction("refresh_youtube");
   
   // Handle search input
   const handleSearch = (value: string) => {
@@ -175,14 +230,47 @@ export default function Updates() {
           <div className="flex justify-between items-center">
             <div>
               <h3 className="text-lg font-medium">Database Sync</h3>
-              <p className="text-sm text-muted-foreground">Refresh your songs from Spotify</p>
+              <p className="text-sm text-muted-foreground">Refresh your songs from your music platforms</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                <a href="/accountmanager" className="text-blue-500 hover:underline">
+                  Manage your connected accounts
+                </a>
+              </p>
             </div>
-            <div className="flex items-center gap-2">
-
+            <div className="flex items-center gap-3">
               <Form method="post">
-                <Button type="submit" name="action" value="refresh" variant="outline">
-                  {navigation.state === "submitting" ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                  Sync Library
+                <Button 
+                  type="submit" 
+                  name="action" 
+                  value="refresh_spotify" 
+                  variant="outline"
+                  disabled={isRefreshingSpotify || isRefreshingYoutube}
+                  className="flex items-center gap-2"
+                >
+                  {isRefreshingSpotify ? (
+                    <Loader className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <SpotifyLogo className="h-4 w-4" />
+                  )}
+                  Sync Spotify
+                </Button>
+              </Form>
+              
+              <Form method="post">
+                <Button 
+                  type="submit" 
+                  name="action" 
+                  value="refresh_youtube" 
+                  variant="outline"
+                  disabled={isRefreshingSpotify || isRefreshingYoutube}
+                  className="flex items-center gap-2"
+                >
+                  {isRefreshingYoutube ? (
+                    <Loader className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <YoutubeLogo className="h-4 w-4" />
+                  )}
+                  Sync YouTube Playlists
                 </Button>
               </Form>
             </div>
@@ -425,5 +513,33 @@ export default function Updates() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// Spotify Logo Component
+function SpotifyLogo({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      className={className}
+      fill="currentColor"
+    >
+      <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
+    </svg>
+  );
+}
+
+// YouTube Logo Component
+function YoutubeLogo({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      className={className}
+      fill="currentColor"
+    >
+      <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+    </svg>
   );
 }

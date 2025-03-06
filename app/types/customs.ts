@@ -88,6 +88,7 @@ export interface YouTubeTrackItem {
 export interface YouTubePlaylistItem {
   id: string;
   snippet: {
+    videoOwnerChannelTitle: string;
     publishedAt: string;
     title: string;
     description: string;
