@@ -1,87 +1,103 @@
-# Welcome to Remix!
+# Zenyo's Playlix
 
-- 📖 [Remix docs](https://remix.run/docs)
+Zenyo's Playlix is a powerful music library manager that allows you to consolidate and download your music from multiple streaming platforms. Currently supporting Spotify and YouTube, the application helps you manage your playlists, download your favorite tracks, and maintain a personal music library.
 
-## Development
+## Features
 
-Run the dev server:
+- **Multi-platform Support**: Connect your Spotify and YouTube accounts to access all your playlists in one place
+- **Playlist Management**: View and filter your music by platform, playlist, or download status
+- **Download Queue**: Efficiently download tracks with a background queue system
+- **Local Library**: Maintain a local copy of your favorite music
+- **Real-time Updates**: Track download progress with real-time notifications
 
-```shellscript
+## Development Setup
+
+### Prerequisites
+
+- Node.js (v20 or higher)
+- Redis server (for the download queue)
+- SQLite (for the database)
+
+### Getting Started
+
+1. **Clone the repository**
+
+```bash
+git clone <repository-url>
+cd PlaylistsRemix
+```
+
+2. **Install dependencies**
+
+```bash
+npm install
+```
+
+3. **Initialize the database**
+
+```bash
+npm run init-db
+```
+
+4. **Start Redis server (using Docker)**
+
+```bash
+docker run -d -p 6379:6379 --name playlix-redis redis:alpine
+```
+
+5. **Start the development server**
+
+```bash
 npm run dev
 ```
 
-## Deployment
+The application will be available at http://localhost:3000.
 
-First, build your app for production:
+## Configuration
 
-```sh
+Create a `.env` file in the root directory with the following variables:
+
+```
+# Authentication
+SPOTIFY_CLIENT_ID=your_spotify_client_id
+SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
+SPOTIFY_CALLBACK_URL=http://localhost:3000/auth/spotify/callback
+
+YOUTUBE_CLIENT_ID=your_youtube_client_id
+YOUTUBE_CLIENT_SECRET=your_youtube_client_secret
+YOUTUBE_CALLBACK_URL=http://localhost:3000/auth/youtube/callback
+
+# Session
+SESSION_SECRET=your_session_secret
+```
+
+## Production Deployment
+
+1. **Build the application**
+
+```bash
 npm run build
 ```
 
-Then run the app in production mode:
+2. **Start the production server**
 
-```sh
+```bash
 npm start
 ```
 
-Now you'll need to pick a host to deploy it to.
+## Project Structure
 
-### DIY
+- `app/`: Main application code
+  - `components/`: React components
+  - `db/`: Database files and migrations
+  - `routes/`: Remix routes
+  - `services/`: Backend services
+  - `utils/`: Utility functions
+  - `workers/`: Background workers
+- `scripts/`: Utility scripts
+- `public/`: Static assets
 
-If you're familiar with deploying Node applications, the built-in Remix app server is production-ready.
-
-Make sure to deploy the output of `npm run build`
-
-- `build/server`
-- `build/client`
-
-
-
-
-## Next Steps
-
-Redis + Bull Implementation Steps
-1. Basic Setup
-Install Redis & packages
-Set environment variables
-Test connection
-2. Queue Structure
-Download Queue
-Configure retries & concurrency
-Set job priorities
-Basic rate limiting
-Cleanup Queue
-Simple temp file cleanup
-Basic storage checks
-3. Core Implementation
-Download Worker
-File downloads
-Temp storage
-Progress tracking
-Basic error handling
-Storage System
-User directories
-Simple quota check
-File organization
-Progress Updates
-WebSocket setup
-Basic progress events
-Simple UI feedback
-4. Monitoring
-Basic Bull Board setup
-2. Simple error logging
-Priority Order
-Queue setup
-Basic downloads
-Progress tracking
-File management
-Cleanup system
-Success Goals
-Downloads work reliably
-Progress shows correctly
-Files organized by user
-System stays stable
-
+## Task Tracking
 
 DONE : FIX The delivery of the file (send response with file without redirect)
 DONE : Change the update button to old css (icon ghost)
