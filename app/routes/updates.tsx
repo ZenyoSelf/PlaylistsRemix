@@ -124,12 +124,22 @@ export async function action({
     try {
       const result = await refreshSpotifyLibrary(request);
       
+      if (!result.success) {
+        return jsonWithError(
+          {
+            songs: result.songs,
+            total: result.total
+          },
+          result.message
+        );
+      }
+      
       return jsonWithSuccess(
         {
           songs: result.songs,
           total: result.total
         },
-        "Successfully refreshed Spotify library"
+        result.message
       );
     } catch (error) {
       return jsonWithError(

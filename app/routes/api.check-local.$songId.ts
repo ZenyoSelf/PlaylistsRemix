@@ -4,6 +4,9 @@ import fs from "fs/promises";
 import { getSongById, updateSongLocalStatus } from "~/services/db.server";
 import { findMatchingFile } from "~/utils/file-matching.server";
 
+// Helper function to add delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export const loader: LoaderFunction = async ({ params, request }) => {
   const songId = params.songId;
   
@@ -12,6 +15,9 @@ export const loader: LoaderFunction = async ({ params, request }) => {
   }
 
   try {
+    // Add a small delay to throttle requests (100-300ms)
+    await delay(Math.floor(Math.random() * 200) + 100);
+    
     // Get song details
     const song = await getSongById(songId);
     if (!song) {
@@ -36,37 +42,45 @@ export const loader: LoaderFunction = async ({ params, request }) => {
         : 'default'
     );
 
-    // Check if directory exists
+    // Check if directory exists, if not, just return isLocal: false without error
+    let dirExists = false;
     try {
       await fs.access(dirPath);
+      dirExists = true;
     } catch (error) {
       // Directory doesn't exist, file is not local
+      console.log(`Directory does not exist: ${dirPath}`);
       await updateSongLocalStatus(songId, false);
       return json({ isLocal: false });
     }
 
-    // Find matching file using our improved matching function
-    const artistName = Array.isArray(song.artist_name) 
-      ? song.artist_name.join(' ') 
-      : typeof song.artist_name === 'string' 
-        ? song.artist_name 
-        : undefined;
+    // Only proceed with file matching if directory exists
+    if (dirExists) {
+      // Find matching file using our improved matching function
+      const artistName = Array.isArray(song.artist_name) 
+        ? song.artist_name.join(' ') 
+        : typeof song.artist_name === 'string' 
+          ? song.artist_name 
+          : undefined;
+      
+      const matchingFile = await findMatchingFile(dirPath, song.title || '', artistName);
+
+      if (matchingFile) {
+        // File exists locally
+        await updateSongLocalStatus(songId, true);
+        return json({ isLocal: true, fileName: matchingFile });
+      } else {
+        // File not found
+        await updateSongLocalStatus(songId, false);
+        return json({ isLocal: false });
+      }
+    }
     
-    const matchingFile = await findMatchingFile(dirPath, song.title || '', artistName);
-
-    if (matchingFile) {
-      // File exists locally
-      await updateSongLocalStatus(songId, true);
-      return json({ isLocal: true, fileName: matchingFile });
-    } else {
-      // File not found
-      await updateSongLocalStatus(songId, false);
-      return json({ isLocal: false });
-    }
+    return json({ isLocal: false });
   } catch (error) {
     console.error("Error checking file:", error);
     return json(
-      { error: "Error checking file" },
+      { error: "Error checking file", details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     );
   }

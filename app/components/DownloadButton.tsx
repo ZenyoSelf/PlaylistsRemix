@@ -1,10 +1,10 @@
 import { SquarePlus, Download, Loader2 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "./ui/button";
 
 interface DownloadButtonProps {
   songId: string;
-  userId: string;
+  userId?: string;
 }
 
 export function DownloadButton({ songId, userId }: DownloadButtonProps) {
@@ -12,12 +12,27 @@ export function DownloadButton({ songId, userId }: DownloadButtonProps) {
   const [error, setError] = useState<string | null>(null);
   const [isLocal, setIsLocal] = useState<boolean | null>(null);
   const [isChecking, setIsChecking] = useState(true);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check if the file is available locally
   useEffect(() => {
-    const checkLocalStatus = async () => {
+    // Clear any existing timeout when component mounts or dependencies change
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+
+    setIsChecking(true);
+    
+    // Skip the check if userId is not available
+    if (!userId) {
+      setIsLocal(false);
+      setIsChecking(false);
+      return;
+    }
+    
+    // Set a timeout to delay the check by 500ms
+    timeoutRef.current = setTimeout(async () => {
       try {
-        setIsChecking(true);
         const response = await fetch(`/api/check-local/${songId}?userId=${userId}`);
         const data = await response.json();
         setIsLocal(data.isLocal);
@@ -27,13 +42,24 @@ export function DownloadButton({ songId, userId }: DownloadButtonProps) {
       } finally {
         setIsChecking(false);
       }
-    };
+    }, 500); // 500ms delay before checking
 
-    checkLocalStatus();
+    // Cleanup function to clear the timeout if component unmounts
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
   }, [songId, userId]);
 
   const handleQueueDownload = async () => {
     try {
+      // Validate userId is available
+      if (!userId) {
+        setError("User ID is required for download");
+        return;
+      }
+      
       setIsDownloading(true);
       setError(null);
 
@@ -62,6 +88,12 @@ export function DownloadButton({ songId, userId }: DownloadButtonProps) {
 
   const handleDirectDownload = async () => {
     try {
+      // Validate userId is available
+      if (!userId) {
+        setError("User ID is required for download");
+        return;
+      }
+      
       setIsDownloading(true);
       setError(null);
 
@@ -97,9 +129,10 @@ export function DownloadButton({ songId, userId }: DownloadButtonProps) {
     <div className="flex flex-col items-center gap-2">
       <Button
         onClick={isLocal ? handleDirectDownload : handleQueueDownload}
-        disabled={isDownloading}
+        disabled={isDownloading || !userId}
         variant="ghost"
         size="icon"
+        title={!userId ? "User ID is required for download" : undefined}
       >
         {isDownloading ? (
           <Loader2 className="w-4 h-4 animate-spin" />

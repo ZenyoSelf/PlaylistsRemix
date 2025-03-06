@@ -9,7 +9,9 @@
     "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
     "start": "remix-serve ./build/server/index.js",
     "typecheck": "tsc",
-    "init-db": "node scripts/init-db.js"
+    "init-db": "node scripts/init-db.js",
+    "reset-refresh": "node scripts/reset-refresh.js",
+    "fix-null-users": "node scripts/fix-null-users.js"
   },
   "dependencies": {
     "@bull-board/express": "^6.7.10",

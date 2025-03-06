@@ -124,8 +124,12 @@ DONE : Fix the multiple playlists thing. Only one track must be shown, even if i
 DONE : Add a new selector for playlists.
 
 
+
+
 TODO THINK : Spotify liked songs limit
 
-Overhaul the populatesongsforuser method : accurate email, fix the youtube forbidden (scope probably), only get music.youtube.com playlists, etc...
-Add 
-Add true auth to the app : user need to create account or get created to access it, so that the user can have different emails for spotify and youtube, while having one email in the DB.
+DONE : Overhaul the populatesongsforuser method : accurate email, fix the youtube forbidden (scope probably), only get music.youtube.com playlists, etc...
+REMOVED : Add true auth to the app : user need to create account or get created to access it, so that the user can have different emails for spotify and youtube, while having one email in the DB.
+
+Add one click download for all not downloaded file (new-additions)
+Add accurate metadata to file (right artist, right album name, ...)

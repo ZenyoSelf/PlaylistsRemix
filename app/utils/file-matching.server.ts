@@ -1,11 +1,15 @@
 import path from "path";
 import fs from "fs/promises";
 
+// Helper function to add delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 /**
  * Normalizes a string for comparison by converting to lowercase,
  * removing special characters, normalizing whitespace, and trimming.
  */
 export function normalizeString(str: string): string {
+  if (!str) return '';
   return str
     .toLowerCase()
     .replace(/[^\w\s]/g, '') // Remove special characters
@@ -19,12 +23,29 @@ export function normalizeString(str: string): string {
  */
 export async function findMatchingFile(dirPath: string, songTitle: string, artistName?: string): Promise<string | null> {
   try {
+    // Add a small delay to throttle file system operations
+    await delay(50);
+    
     // Get all files in the directory
-    const files = await fs.readdir(dirPath);
+    let files: string[] = [];
+    try {
+      files = await fs.readdir(dirPath);
+    } catch (error) {
+      console.error(`Error reading directory ${dirPath}:`, error);
+      return null;
+    }
+    
+    if (files.length === 0) {
+      return null;
+    }
     
     // Normalize the song title for comparison
     const normalizedTitle = normalizeString(songTitle);
     const normalizedArtist = artistName ? normalizeString(artistName) : null;
+    
+    if (!normalizedTitle) {
+      return null;
+    }
     
     // First try: exact match with title
     const exactMatch = files.find(file => {
@@ -44,6 +65,11 @@ export async function findMatchingFile(dirPath: string, songTitle: string, artis
     
     // Third try: check if title keywords are in the filename
     const titleKeywords = normalizedTitle.split(' ').filter(word => word.length > 2);
+    
+    if (titleKeywords.length === 0) {
+      return null;
+    }
+    
     const keywordMatch = files.find(file => {
       const fileName = normalizeString(path.parse(file).name);
       // Check if most of the keywords are in the filename

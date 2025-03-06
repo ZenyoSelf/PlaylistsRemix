@@ -2,55 +2,92 @@ import {
   NavigationMenu,
   NavigationMenuList,
   NavigationMenuItem,
-  NavigationMenuLink,
 } from "@radix-ui/react-navigation-menu";
 import { Link } from "@remix-run/react";
 import styles from "~/global.css?url";
 import { LinksFunction } from "@remix-run/node";
-import { HomeIcon } from "lucide-react";
+import { Music, Link as LinkIcon, Download, UserCircle } from "lucide-react";
 import { DownloadManager } from "./DownloadManager";
+import { Button } from "./ui/button";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: styles }];
 
 export default function Header() {
   return (
-    <header className="flex items-center justify-between px-4 py-2 md:py-4">
-      <div className="flex items-center space-x-4">
-        <Link className="flex items-center space-x-2" to="/">
-          {<HomeIcon className="h-6 w-6" />}
-          <span className="text-lg prose">ZenyoPlaylists</span>
-        </Link>
-      </div>
-      
-      <div className="flex items-center gap-4">
-        <NavigationMenu>
-          <NavigationMenuList className="flex gap-2">
-            <NavigationMenuItem>
-              <NavigationMenuLink asChild>
+    <div className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <header className="container flex h-16 items-center justify-between">
+        {/* Logo and App Name */}
+        <div className="flex items-center gap-2">
+          <Link 
+            to="/" 
+            className="flex items-center gap-2 transition-colors hover:text-primary"
+          >
+            <Music className="h-6 w-6" />
+            <span className="font-bold text-xl hidden md:inline-block">Zenyo&apos;s Playlix</span>
+          </Link>
+        </div>
+        
+        {/* Navigation */}
+        <div className="flex items-center gap-4">
+          <NavigationMenu>
+            <NavigationMenuList className="hidden md:flex gap-1">
+              <NavigationMenuItem>
                 <Link
-                  className="flex h-full w-full select-none flex-col justify-end rounded-md bg-gradient-to-b from-muted/50 to-muted p-2 no-underline outline-none focus:shadow-md"
-                  to={"/updates"}
+                  to="/updates"
+                  className="group inline-flex h-9 w-max items-center justify-center rounded-md bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[active]:bg-accent/50 data-[state=open]:bg-accent/50"
                 >
-                  DL Manager
+                  <Download className="mr-2 h-4 w-4" />
+                  Download Manager
                 </Link>
-              </NavigationMenuLink>
-            </NavigationMenuItem>
-            
-            <NavigationMenuItem>
-              <NavigationMenuLink asChild>
+              </NavigationMenuItem>
+              
+              <NavigationMenuItem>
                 <Link
-                  className="flex h-full w-full select-none flex-col justify-end rounded-md bg-gradient-to-b from-muted/50 to-muted p-2 no-underline outline-none focus:shadow-md"
-                  to={"/accountmanager"}
+                  to="/accountmanager"
+                  className="group inline-flex h-9 w-max items-center justify-center rounded-md bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[active]:bg-accent/50 data-[state=open]:bg-accent/50"
                 >
+                  <UserCircle className="mr-2 h-4 w-4" />
                   Account Manager
                 </Link>
-              </NavigationMenuLink>
-            </NavigationMenuItem>
-          </NavigationMenuList>
-        </NavigationMenu>
+              </NavigationMenuItem>
+              
+              <NavigationMenuItem>
+                <Link
+                  to="/custom-url"
+                  className="group inline-flex h-9 w-max items-center justify-center rounded-md bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[active]:bg-accent/50 data-[state=open]:bg-accent/50"
+                >
+                  <LinkIcon className="mr-2 h-4 w-4" />
+                  Custom URL
+                </Link>
+              </NavigationMenuItem>
+            </NavigationMenuList>
+            
+            {/* Mobile Navigation */}
+            <div className="md:hidden flex gap-2">
+              <Button variant="ghost" size="icon" asChild>
+                <Link to="/updates">
+                  <Download className="h-5 w-5" />
+                </Link>
+              </Button>
+              <Button variant="ghost" size="icon" asChild>
+                <Link to="/accountmanager">
+                  <UserCircle className="h-5 w-5" />
+                </Link>
+              </Button>
+              <Button variant="ghost" size="icon" asChild>
+                <Link to="/custom-url">
+                  <LinkIcon className="h-5 w-5" />
+                </Link>
+              </Button>
+            </div>
+          </NavigationMenu>
 
-        <DownloadManager userId="arnaud" />
-      </div>
-    </header>
+          {/* Download Manager Component */}
+          <div className="border-l pl-4 ml-2">
+            <DownloadManager userId="arnaud" />
+          </div>
+        </div>
+      </header>
+    </div>
   );
 }

@@ -283,11 +283,29 @@ export async function refreshSpotifyLibrary(request: Request) {
   const isSpotifyAuthenticated = await isAuthenticatedWithProvider(request, "spotify");
   
   if (!isSpotifyAuthenticated) {
-    throw new Error("User not authenticated with Spotify");
+    return {
+      success: false,
+      message: "You need to authenticate with Spotify first. Please connect your Spotify account.",
+      songs: [],
+      total: 0
+    };
   }
   
   const spotifySession = await getProviderSession(request, "spotify");
+  console.log("Spotify session:", spotifySession);
+  
   const userEmail = spotifySession?.email || '';
+  console.log("User email from Spotify session:", userEmail);
+  
+  if (!userEmail) {
+    return {
+      success: false,
+      message: "Could not determine user email from Spotify session. Please reconnect your Spotify account.",
+      songs: [],
+      total: 0
+    };
+  }
+  
   const latestRefresh = await getLatestRefresh(userEmail);
   
   // Begin transaction
@@ -297,7 +315,34 @@ export async function refreshSpotifyLibrary(request: Request) {
     const spotifyAccessToken = await getProviderAccessToken(request, "spotify");
     
     if (!spotifyAccessToken) {
-      throw new Error("Failed to get Spotify access token");
+      await db.run('ROLLBACK');
+      return {
+        success: false,
+        message: "Failed to get Spotify access token. Please reconnect your Spotify account.",
+        songs: [],
+        total: 0
+      };
+    }
+    
+    // Verify token is valid by making a simple API call
+    try {
+      const testResponse = await fetch('https://api.spotify.com/v1/me', {
+        headers: { Authorization: `Bearer ${spotifyAccessToken}` }
+      });
+      
+      if (!testResponse.ok) {
+        if (testResponse.status === 401) {
+          await db.run('ROLLBACK');
+          return {
+            success: false,
+            message: "Your Spotify session has expired. Please reconnect your Spotify account.",
+            songs: [],
+            total: 0
+          };
+        }
+      }
+    } catch (error) {
+      console.error("Error verifying Spotify token:", error);
     }
     
     // Process Spotify library
@@ -319,14 +364,32 @@ export async function refreshSpotifyLibrary(request: Request) {
     });
     
     return {
+      success: true,
+      message: `Successfully refreshed Spotify library. Added ${total} new tracks.`,
       songs: userSongs.songs,
-      total
+      total: userSongs.total
     };
   } catch (error) {
-    // Rollback transaction in case of error
+    // Rollback transaction on error
     await db.run('ROLLBACK');
+    
     console.error("Error refreshing Spotify library:", error);
-    throw error;
+    
+    let errorMessage = "An error occurred while refreshing your Spotify library.";
+    if (error instanceof Error) {
+      if (error.message.includes("access token expired") || error.message.includes("re-authenticate")) {
+        errorMessage = "Your Spotify session has expired. Please reconnect your Spotify account.";
+      } else {
+        errorMessage = `Error: ${error.message}`;
+      }
+    }
+    
+    return {
+      success: false,
+      message: errorMessage,
+      songs: [],
+      total: 0
+    };
   }
 }
 
@@ -571,7 +634,7 @@ export async function handleSpotifyTracks(spotifyAccessToken: string, db: sqlite
               await db.run(
                 `INSERT INTO song 
                 (artist_name, downloaded, title, album, album_image, user, playlist, platform, url, platform_added_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"`,
                 [
                   artist_name,
                   0,
@@ -788,13 +851,34 @@ export async function getFilters(request: Request) {
  */
 export async function processSpotifyLibrary(accessToken: string, db: Database, userEmail: string, latestRefresh: string) {
   let total = 0;
+  const errors: string[] = [];
   
   try {
     // 1. Process liked songs
-    total += await processSpotifyLikedSongs(accessToken, db, userEmail, latestRefresh);
+    try {
+      total += await processSpotifyLikedSongs(accessToken, db, userEmail, latestRefresh);
+    } catch (e) {
+      console.error("Error processing Spotify liked songs:", e);
+      errors.push(`Liked songs error: ${e instanceof Error ? e.message : String(e)}`);
+    }
     
     // 2. Process all user playlists
-    total += await processSpotifyPlaylists(accessToken, db, userEmail, latestRefresh);
+    try {
+      total += await processSpotifyPlaylists(accessToken, db, userEmail, latestRefresh);
+    } catch (e) {
+      console.error("Error processing Spotify playlists:", e);
+      errors.push(`Playlists error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    
+    if (errors.length > 0) {
+      if (total > 0) {
+        // Some content was processed successfully
+        console.warn(`Spotify library processed with errors: ${errors.join('; ')}`);
+      } else {
+        // Nothing was processed successfully
+        throw new Error(`Failed to process Spotify content: ${errors.join('; ')}`);
+      }
+    }
     
     return total;
   } catch (error) {
@@ -815,9 +899,16 @@ export async function processSpotifyLikedSongs(accessToken: string, db: Database
   let total = 0;
   
   try {
+    console.log(`Processing Spotify liked songs for user: ${userEmail}`);
+    
+    if (!userEmail) {
+      console.error("User email is empty or null. Cannot process Spotify liked songs.");
+      return 0;
+    }
+    
     const likedsongs = await getLikedSongsSpotify(0, 50, accessToken);
     
-    if (likedsongs) {
+    if (likedsongs && likedsongs.items && Array.isArray(likedsongs.items)) {
       const likedItems = likedsongs.items.filter(
         (t) => new Date(t.added_at) > new Date(latestRefresh)
       );
@@ -847,6 +938,8 @@ export async function processSpotifyLikedSongs(accessToken: string, db: Database
           total++;
         }
       }
+    } else {
+      console.log("No liked songs found or invalid response format");
     }
     
     return total;
@@ -868,6 +961,13 @@ export async function processSpotifyPlaylists(accessToken: string, db: Database,
   let total = 0;
   
   try {
+    console.log(`Processing Spotify playlists for user: ${userEmail}`);
+    
+    if (!userEmail) {
+      console.error("User email is empty or null. Cannot process Spotify playlists.");
+      return 0;
+    }
+    
     const playlists = await getAllUserPlaylistsSpotify(accessToken);
     
     for (const playlist of playlists) {
@@ -1183,6 +1283,80 @@ export async function processYouTubeLikedVideos(accessToken: string, db: Databas
     return total;
   } catch (error) {
     console.error("Error processing YouTube liked videos:", error);
+    throw error;
+  }
+}
+
+export async function saveCustomUrlSong(
+  url: string,
+  title: string,
+  artistName: string[],
+  thumbnailUrl: string,
+  platform: string,
+  userId: string
+): Promise<number> {
+  const db = await getDb();
+  
+  try {
+    // Check if the song already exists for this user
+    const existingSong = await db.get(
+      "SELECT id FROM song WHERE url = ? AND user = ?",
+      [url, userId]
+    );
+    
+    if (existingSong) {
+      // Return the existing song ID
+      return existingSong.id;
+    }
+    
+    // Insert the new song
+    const result = await db.run(
+      `INSERT INTO song (
+        title, 
+        artist_name, 
+        album_image, 
+        album, 
+        playlist, 
+        platform, 
+        url, 
+        downloaded, 
+        local, 
+        platform_added_at,
+        user
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        title,
+        JSON.stringify(artistName),
+        thumbnailUrl,
+        "Custom URL",
+        JSON.stringify(["Custom URL"]),
+        platform,
+        url,
+        0, // not downloaded yet
+        0, // not local yet
+        new Date().toISOString(),
+        userId
+      ]
+    );
+    
+    // Ensure we return a number even if lastID is undefined
+    if (typeof result.lastID === 'undefined') {
+      // Get the ID of the song we just inserted
+      const insertedSong = await db.get(
+        "SELECT id FROM song WHERE url = ? AND user = ?",
+        [url, userId]
+      );
+      
+      if (insertedSong && typeof insertedSong.id === 'number') {
+        return insertedSong.id;
+      }
+      
+      throw new Error("Failed to get ID of inserted song");
+    }
+    
+    return result.lastID;
+  } catch (error) {
+    console.error("Error saving custom URL song:", error);
     throw error;
   }
 }

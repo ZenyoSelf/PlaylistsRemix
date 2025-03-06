@@ -34,30 +34,34 @@ export async function getLikedSongsSpotify(
   offset: number,
   limit: number,
   accessToken: string
-) {
-  let likedSongs: unknown[] = [];
-
+): Promise<SpotifyTrack | null> {
   try {
-    const fetchLikedSongsTracks = (
-      limit: number,
-      offset: number
-    ): Promise<SpotifyTrack> =>
-      fetch(
-        `https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${offset}`,
-        {
-          method: "GET",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
-      ).then(async (r) => await r.json());
+    const response = await fetch(
+      `https://api.spotify.com/v1/me/tracks?limit=${limit}&offset=${offset}`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
 
-    const data = await fetchLikedSongsTracks(limit, offset);
-    console.log(data);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    likedSongs = likedSongs.concat(data.items); // Concatenate new songs to the existing list
-    offset += limit; // Increment offset for pagination
+    if (!response.ok) {
+      console.error(`Spotify API error: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
+    const data = await response.json();
+    
+    // Validate the response structure
+    if (!data || !data.items || !Array.isArray(data.items)) {
+      console.error("Invalid response format from Spotify API:", data);
+      return null;
+    }
+    
+    console.log(`Retrieved ${data.items.length} liked songs from Spotify`);
     return data;
   } catch (error) {
     console.error("Error fetching liked songs:", error);
+    return null;
   }
 }
 
@@ -96,17 +100,37 @@ export async function getAllUserPlaylistsSpotify(accessToken: string) {
       );
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch playlists: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error(`Spotify API error (${response.status}): ${errorText}`);
+        
+        if (response.status === 401) {
+          throw new Error("Spotify access token expired or invalid. Please re-authenticate with Spotify.");
+        }
+        
+        throw new Error(`Failed to fetch playlists: ${response.statusText} (${response.status}). Details: ${errorText}`);
       }
 
       const data = await response.json();
-      allPlaylists = allPlaylists.concat(data.items);
       
-      // Check if there are more playlists to fetch
-      offset += limit;
-      hasMore = data.items.length === limit && offset < data.total;
+      if (!data || !data.items) {
+        console.error("Invalid response format from Spotify API:", data);
+        throw new Error("Invalid response format from Spotify API");
+      }
+      
+      console.log(`Retrieved ${data.items.length} playlists from offset ${offset}`);
+      
+      if (data.items && data.items.length > 0) {
+        allPlaylists = allPlaylists.concat(data.items);
+      }
+
+      if (data.next && data.items.length === limit) {
+        offset += limit;
+      } else {
+        hasMore = false;
+      }
     }
 
+    console.log(`Total playlists retrieved: ${allPlaylists.length}`);
     return allPlaylists;
   } catch (error) {
     console.error('Error fetching all playlists:', error);
@@ -131,23 +155,44 @@ export async function getPlaylistTracksSpotify(accessToken: string, playlistId: 
       );
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch playlist tracks: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error(`Spotify API error (${response.status}): ${errorText}`);
+        
+        if (response.status === 401) {
+          throw new Error("Spotify access token expired or invalid. Please re-authenticate with Spotify.");
+        }
+        
+        throw new Error(`Failed to fetch playlist tracks: ${response.statusText} (${response.status}). Details: ${errorText}`);
       }
 
       const data = await response.json();
-      allTracks = allTracks.concat(data.items);
       
-      // Check if there are more tracks to fetch
-      offset += limit;
-      hasMore = data.items.length === limit && offset < data.total;
+      if (!data || !data.items) {
+        console.error("Invalid response format from Spotify API:", data);
+        throw new Error("Invalid response format from Spotify API");
+      }
+      
+      console.log(`Retrieved ${data.items.length} tracks from playlist ${playlistId} (offset ${offset})`);
+      
+      if (data.items && data.items.length > 0) {
+        allTracks = allTracks.concat(data.items);
+      }
+
+      if (data.next && data.items.length === limit) {
+        offset += limit;
+      } else {
+        hasMore = false;
+      }
     }
 
+    console.log(`Total tracks retrieved from playlist ${playlistId}: ${allTracks.length}`);
+    
     return {
-      total: allTracks.length,
-      items: allTracks
+      items: allTracks,
+      total: allTracks.length
     };
   } catch (error) {
-    console.error('Error fetching playlist tracks:', error);
+    console.error(`Error fetching tracks for playlist ${playlistId}:`, error);
     throw error;
   }
 }
