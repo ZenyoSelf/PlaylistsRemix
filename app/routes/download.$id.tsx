@@ -28,7 +28,9 @@ export const loader: LoaderFunction = async ({ params }) => {
       process.cwd(),
       "tmp",
       "arnaud",
-      song.playlist || 'default'
+      Array.isArray(song.playlist) && song.playlist.length > 0 
+        ? song.playlist[0] 
+        : 'default'
     );
 
     // List files in directory and find the one we want
@@ -41,10 +43,15 @@ export const loader: LoaderFunction = async ({ params }) => {
       }, "File already exists");
     }
     
+    // Get the first playlist name or use 'default' if none exists
+    const playlistName = Array.isArray(song.playlist) && song.playlist.length > 0 
+      ? song.playlist[0] 
+      : 'default';
+    
     const result = await downloadSpotifySong(
       song.title!,
       song.artist_name!,
-      song.playlist!,
+      playlistName,
       "arnaud"
     );
 

@@ -476,8 +476,19 @@ export async function populateSongsForUser(request: Request) {
 
 export async function getSongById(id: string): Promise<Song | null> {
   const db = await getDb();
-  const song = await db.get("SELECT * FROM song WHERE id = ?", id);
-  return song || null;
+  const song = await db.get("SELECT * FROM song WHERE id = ?", id) as SongRecord | undefined;
+  
+  if (!song) return null;
+  
+  // Parse JSON fields
+  return {
+    ...song,
+    artist_name: song.artist_name ? JSON.parse(song.artist_name) : null,
+    playlist: song.playlist ? JSON.parse(song.playlist) : null,
+    downloaded: Boolean(song.downloaded),
+    local: Boolean(song.local),
+    platform: song.platform as "Youtube" | "Spotify" | "Soundcloud"
+  };
 }
 
 export async function handleSpotifyTracks(spotifyAccessToken: string, db: sqlite3.Database, userEmail: string, latestRefresh: string) {

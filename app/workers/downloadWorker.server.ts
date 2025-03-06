@@ -50,12 +50,22 @@ downloadQueue.process(async (job) => {
       songName: song.title || 'Unknown Song'
     });
 
-    // Convert artist_name string to array
-    const artistString = typeof song.artist_name === 'string' ? song.artist_name : '';
-    const artists = artistString.split(',').map((a: string) => a.trim()).filter(Boolean);
+    // Ensure artist_name is an array
+    let artists: string[] = [];
+    if (Array.isArray(song.artist_name)) {
+      artists = song.artist_name;
+    } else if (typeof song.artist_name === 'string') {
+      const artistString = song.artist_name as string;
+      artists = artistString.split(',').map((a: string) => a.trim()).filter(Boolean);
+    }
+
+    // Get the first playlist name or use 'default' if none exists
+    const playlistName = Array.isArray(song.playlist) && song.playlist.length > 0 
+      ? song.playlist[0] 
+      : 'default';
 
     // Download the song
-    const result = await downloadSpotifySong(song.title!, artists, song.playlist!, userId);
+    const result = await downloadSpotifySong(song.title!, artists, playlistName, userId);
     const { path: filePath } = JSON.parse(result);
 
     // Update progress to 100% with job info

@@ -33,7 +33,9 @@ export const loader: LoaderFunction = async ({ params }) => {
       process.cwd(),
       "tmp",
       userId,
-      song.playlist || 'default'
+      Array.isArray(song.playlist) && song.playlist.length > 0 
+        ? song.playlist[0] 
+        : 'default'
     );
 
     // Find matching file using our improved matching function

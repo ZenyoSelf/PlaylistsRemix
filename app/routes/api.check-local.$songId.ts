@@ -31,7 +31,9 @@ export const loader: LoaderFunction = async ({ params, request }) => {
       process.cwd(),
       "tmp",
       userId,
-      song.playlist || 'default'
+      Array.isArray(song.playlist) && song.playlist.length > 0 
+        ? song.playlist[0] 
+        : 'default'
     );
 
     // Check if directory exists

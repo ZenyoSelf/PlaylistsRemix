@@ -1,1 +1,1 @@
-DELETE FROM song where user = 'arnaudsoltermann@gmail.com';
+select * from song;
