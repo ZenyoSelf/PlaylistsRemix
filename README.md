@@ -28,7 +28,7 @@ Zenyo's Playlix is a powerful music library manager that allows you to consolida
 1. **Clone the repository**
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/ZenyoSelf/PlaylistsRemix.git
 cd PlaylistsRemix
 ```
 
