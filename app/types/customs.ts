@@ -6,12 +6,29 @@ export interface Song {
   artist_name: string[] | null;
   album_image: string | null;
   album: string | null;
-  playlist: string[] | null;
   platform: "Youtube" | "Spotify" | "Soundcloud";
   platform_added_at: string;
   url: string;
   downloaded: boolean | null;
   local: boolean | null;
+  playlists?: Playlist[];
+  playlist?: string[] | null;
+}
+
+export interface Playlist {
+  id: number;
+  platform_playlist_id: string;
+  name: string;
+  platform: string;
+  owner_id: string | null;
+  user: string;
+  added_at?: string;
+}
+
+export interface SongPlaylist {
+  song_id: number;
+  playlist_id: number;
+  added_at: string;
 }
 
 export interface TracksRefresh {

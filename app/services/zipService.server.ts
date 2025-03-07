@@ -40,9 +40,11 @@ export async function createZipFromSongs(
   for (const song of songs) {
     try {
       // Get the directory path for the song
-      const playlistName = Array.isArray(song.playlist) && song.playlist.length > 0 
-        ? song.playlist[0] 
-        : 'default';
+      const playlistName = song.playlists && song.playlists.length > 0 
+        ? song.playlists[0].name 
+        : (Array.isArray(song.playlist) && song.playlist.length > 0 
+          ? song.playlist[0] 
+          : 'default');
       
       const dirPath = path.join(process.cwd(), 'tmp', userId, playlistName);
       

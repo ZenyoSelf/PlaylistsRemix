@@ -18,10 +18,12 @@ downloadQueue.on('completed', async (job) => {
     
     console.log(`Processing custom URL download for song: ${song.title}`);
     
-    // Get the first playlist name or use 'custom' if none exists
-    const playlistName = Array.isArray(song.playlist) && song.playlist.length > 0 
-      ? song.playlist[0] 
-      : 'custom';
+    // Get the first playlist name or use 'default' if none exists
+    const playlistName = song.playlists && song.playlists.length > 0 
+      ? song.playlists[0].name 
+      : (Array.isArray(song.playlist) && song.playlist.length > 0 
+        ? song.playlist[0] 
+        : 'default');
     
     // Download the song
     await downloadFromCustomUrl(

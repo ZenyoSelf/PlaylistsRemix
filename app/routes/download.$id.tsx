@@ -44,9 +44,11 @@ export const loader: LoaderFunction = async ({ params }) => {
     }
     
     // Get the first playlist name or use 'default' if none exists
-    const playlistName = Array.isArray(song.playlist) && song.playlist.length > 0 
-      ? song.playlist[0] 
-      : 'default';
+    const playlistName = song.playlists && song.playlists.length > 0 
+      ? song.playlists[0].name 
+      : (Array.isArray(song.playlist) && song.playlist.length > 0 
+        ? song.playlist[0] 
+        : 'default');
     
     const result = await downloadSpotifySong(
       song.title!,

@@ -32,14 +32,19 @@ export const loader: LoaderFunction = async ({ params, request }) => {
       return json({ error: "Missing user ID" }, { status: 400 });
     }
 
+    // Get the first playlist name or use 'default' if none exists
+    const playlistName = song.playlists && song.playlists.length > 0 
+      ? song.playlists[0].name 
+      : (Array.isArray(song.playlist) && song.playlist.length > 0 
+        ? song.playlist[0] 
+        : 'default');
+
     // Get directory path
     const dirPath = path.join(
       process.cwd(),
       "tmp",
       userId,
-      Array.isArray(song.playlist) && song.playlist.length > 0 
-        ? song.playlist[0] 
-        : 'default'
+      playlistName
     );
 
     // Check if directory exists, if not, just return isLocal: false without error

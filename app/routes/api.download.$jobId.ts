@@ -28,14 +28,19 @@ export const loader: LoaderFunction = async ({ params }) => {
       return json({ error: "Song not found" }, { status: 404 });
     }
 
+    // Get the first playlist name or use 'default' if none exists
+    const playlistName = song.playlists && song.playlists.length > 0 
+      ? song.playlists[0].name 
+      : (Array.isArray(song.playlist) && song.playlist.length > 0 
+        ? song.playlist[0] 
+        : 'default');
+
     // Get directory path
     const dirPath = path.join(
       process.cwd(),
       "tmp",
       userId,
-      Array.isArray(song.playlist) && song.playlist.length > 0 
-        ? song.playlist[0] 
-        : 'default'
+      playlistName
     );
 
     // Find matching file using our improved matching function

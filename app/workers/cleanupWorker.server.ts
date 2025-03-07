@@ -64,9 +64,13 @@ export async function cleanupOldFiles() {
               // Find the song in the database
               const songTitle = path.parse(file).name.split(' - ')[1] || path.parse(file).name;
               
-              // Get songs that match this title
+              // Get songs that match this title and are in the specified playlist
               const songs = await db.all(
-                "SELECT id FROM song WHERE title LIKE ? AND user = ? AND playlist = ?",
+                `SELECT s.id 
+                 FROM song s
+                 JOIN song_playlist sp ON s.id = sp.song_id
+                 JOIN playlist p ON sp.playlist_id = p.id
+                 WHERE s.title LIKE ? AND s.user = ? AND p.name = ?`,
                 [`%${songTitle}%`, userId, playlist]
               );
               

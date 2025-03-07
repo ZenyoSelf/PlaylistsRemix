@@ -232,6 +232,26 @@ export default function Updates() {
     return range;
   };
 
+  // Format playlist names for display
+  const formatPlaylist = (song) => {
+    if (song.playlists && song.playlists.length > 0) {
+      return song.playlists.map(p => p.name).join(', ');
+    }
+    
+    // Fallback to old playlist field for backward compatibility
+    const playlistStr = song.playlist || '[]';
+    
+    try {
+      return typeof song.playlist === 'string'
+        ? song.playlist
+        : Array.isArray(song.playlist)
+        ? song.playlist.join(', ')
+        : JSON.parse(playlistStr).join(', ');
+    } catch (e) {
+      return playlistStr;
+    }
+  };
+
   return (
     <div className="space-y-4 ">
       {/* Refresh Card */}
@@ -430,23 +450,7 @@ export default function Updates() {
                               song.platform
                             )}</TableCell>
                   <TableCell>
-                    {(() => {
-                      try {
-                        // Parse the playlist JSON string into an array
-                        const playlistStr = song.playlist || '[]';
-                        const playlistArray = typeof playlistStr === 'string' 
-                          ? JSON.parse(playlistStr) as string[]
-                          : playlistStr as string[];
-                        return playlistArray.join(', ');
-                      } catch (e) {
-                        // Fallback to displaying the raw value
-                        return typeof song.playlist === 'string' 
-                          ? song.playlist 
-                          : Array.isArray(song.playlist) 
-                            ? song.playlist.join(', ') 
-                            : '';
-                      }
-                    })()}
+                    {formatPlaylist(song)}
                   </TableCell>
                   <TableCell>{new Date(song.platform_added_at).toLocaleDateString('en-GB', {
                     year: 'numeric',

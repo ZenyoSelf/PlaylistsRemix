@@ -95,9 +95,11 @@ async function processSingleDownload(job) {
     }
 
     // Get the first playlist name or use 'default' if none exists
-    const playlistName = Array.isArray(song.playlist) && song.playlist.length > 0 
-      ? song.playlist[0] 
-      : 'default';
+    const playlistName = song.playlists && song.playlists.length > 0 
+      ? song.playlists[0].name 
+      : (Array.isArray(song.playlist) && song.playlist.length > 0 
+        ? song.playlist[0] 
+        : 'default');
 
     // Download the song
     const result = await downloadSpotifySong(song.title!, artists, playlistName, userId);
@@ -187,9 +189,11 @@ async function processBulkDownload(job) {
         }
         
         // Get the first playlist name or use 'default' if none exists
-        const playlistName = Array.isArray(song.playlist) && song.playlist.length > 0 
-          ? song.playlist[0] 
-          : 'default';
+        const playlistName = song.playlists && song.playlists.length > 0 
+          ? song.playlists[0].name 
+          : (Array.isArray(song.playlist) && song.playlist.length > 0 
+            ? song.playlist[0] 
+            : 'default');
         
         // Download the song
         await downloadSpotifySong(song.title!, artists, playlistName, userId);
