@@ -51,12 +51,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
       </head>
-      <body className="container mx-auto">
+      <body className=" relative min-h-screen">
+        <div className="mx-auto lg:max-w-7xl">
         <Header />
         {children}
         <ScrollRestoration />
         <Scripts />
         <Toaster />
+        </div>
       </body>
     </html>
   );

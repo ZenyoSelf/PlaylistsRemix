@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "~/components/ui/button";
 import { Progress } from "~/components/ui/progress";
-import { X, Download, RefreshCw } from "lucide-react";
+import { X, Download, RefreshCw, Package } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -15,6 +15,7 @@ interface DownloadJob {
   status: 'queued' | 'downloading' | 'completed' | 'error';
   error?: string;
   filePath?: string;
+  isBulk?: boolean;
 }
 
 export function DownloadManager({ userId }: { userId: string }) {
@@ -43,58 +44,64 @@ export function DownloadManager({ userId }: { userId: string }) {
           if (prevJobs.some(job => job.id === data.jobId)) {
             return prevJobs;
           }
+          
+          // Check if this is a bulk download
+          const isBulk = data.jobId.startsWith('bulk-') || data.songName.includes('Bulk download');
+          
           return [...prevJobs, {
             id: data.jobId,
             songName: data.songName,
             progress: 0,
-            status: 'queued'
+            status: 'queued',
+            isBulk
           }];
         });
       } else if (data.type === 'progress') {
-        setJobs(prevJobs => {
-          const jobIndex = prevJobs.findIndex(job => job.id === data.jobId);
-          if (jobIndex === -1) return prevJobs;
-
-          const updatedJobs = [...prevJobs];
-          updatedJobs[jobIndex] = {
-            ...updatedJobs[jobIndex],
-            status: 'downloading',
-            progress: data.progress
-          };
-          return updatedJobs;
-        });
+        setJobs(prevJobs => 
+          prevJobs.map(job => 
+            job.id === data.jobId 
+              ? { 
+                  ...job, 
+                  progress: data.progress, 
+                  status: 'downloading',
+                  isBulk: job.isBulk || data.jobId.startsWith('bulk-') || data.songName.includes('Bulk download')
+                } 
+              : job
+          )
+        );
       } else if (data.type === 'complete') {
-        setJobs(prevJobs => {
-          const jobIndex = prevJobs.findIndex(job => job.id === data.jobId);
-          if (jobIndex === -1) return prevJobs;
-
-          const updatedJobs = [...prevJobs];
-          updatedJobs[jobIndex] = {
-            ...updatedJobs[jobIndex],
-            status: 'completed',
-            progress: 100,
-            filePath: data.filePath
-          };
-          return updatedJobs;
-        });
+        setJobs(prevJobs => 
+          prevJobs.map(job => 
+            job.id === data.jobId 
+              ? { 
+                  ...job, 
+                  progress: 100, 
+                  status: 'completed', 
+                  filePath: data.filePath,
+                  isBulk: job.isBulk || data.jobId.startsWith('bulk-') || data.songName.includes('Bulk download')
+                } 
+              : job
+          )
+        );
       } else if (data.type === 'error') {
-        setJobs(prevJobs => {
-          const jobIndex = prevJobs.findIndex(job => job.id === data.jobId);
-          if (jobIndex === -1) return prevJobs;
-
-          const updatedJobs = [...prevJobs];
-          updatedJobs[jobIndex] = {
-            ...updatedJobs[jobIndex],
-            status: 'error',
-            error: data.error
-          };
-          return updatedJobs;
-        });
+        setJobs(prevJobs => 
+          prevJobs.map(job => 
+            job.id === data.jobId 
+              ? { 
+                  ...job, 
+                  status: 'error', 
+                  error: data.error,
+                  isBulk: job.isBulk || data.jobId.startsWith('bulk-') || data.songName.includes('Bulk download')
+                } 
+              : job
+          )
+        );
       }
     };
 
-    eventSource.onerror = () => {
-      console.error('EventSource failed');
+    eventSource.onerror = (error) => {
+      console.error('EventSource error:', error);
+      eventSource.close();
     };
 
     return () => {
@@ -125,13 +132,15 @@ export function DownloadManager({ userId }: { userId: string }) {
             songId: string;
             userId: string;
             songName: string;
+            type?: string;
           };
           progress: number;
         }) => ({
           id: job.id,
           songName: job.data.songName || 'Unknown Song',
           progress: job.progress || 0,
-          status: job.status === 'active' ? 'downloading' : job.status
+          status: job.status === 'active' ? 'downloading' : job.status,
+          isBulk: job.id.startsWith('bulk-') || job.data.type === 'bulk' || (job.data.songName && job.data.songName.includes('Bulk download'))
         }));
         
         // Keep existing jobs that aren't in the new list
@@ -149,15 +158,20 @@ export function DownloadManager({ userId }: { userId: string }) {
     }
   };
 
-  const handleDownload = async (jobId: string) => {
+  const handleDownload = async (jobId: string, isBulk: boolean = false) => {
     try {
-      const response = await fetch(`/api/download/${jobId}`);
+      // Use different endpoint for bulk downloads
+      const endpoint = isBulk 
+        ? `/api/bulk-download/${jobId}`
+        : `/api/download/${jobId}`;
+        
+      const response = await fetch(endpoint);
       if (!response.ok) throw new Error('Download failed');
 
       const blob = await response.blob();
       const contentDisposition = response.headers.get('Content-Disposition');
       const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
-      let filename = filenameMatch ? filenameMatch[1] : 'download.flac';
+      let filename = filenameMatch ? filenameMatch[1] : isBulk ? 'new-additions.zip' : 'download.flac';
       
       // Decode the URL-encoded filename
       try {
@@ -187,86 +201,103 @@ export function DownloadManager({ userId }: { userId: string }) {
     setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
   };
 
+  const getStatusIcon = (job: DownloadJob) => {
+    if (job.status === 'queued') {
+      return <div className="h-2 w-2 rounded-full bg-yellow-500"></div>;
+    } else if (job.status === 'downloading') {
+      return <div className="h-2 w-2 rounded-full bg-blue-500"></div>;
+    } else if (job.status === 'completed') {
+      return <div className="h-2 w-2 rounded-full bg-green-500"></div>;
+    } else if (job.status === 'error') {
+      return <div className="h-2 w-2 rounded-full bg-red-500"></div>;
+    }
+  };
+
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="outline"
+          variant="ghost"
           size="icon"
           className="relative"
+          onClick={() => setIsOpen(true)}
         >
-          <Download className="h-4 w-4" />
+          <Download className="h-5 w-5" />
           {jobs.length > 0 && (
-            <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground rounded-full w-4 h-4 text-xs flex items-center justify-center">
+            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground">
               {jobs.length}
             </span>
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-4">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold">Downloads</h3>
-            <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={fetchActiveJobs}
-                disabled={isLoading}
-              >
-                <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-              </Button>
-              {jobs.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setJobs([])}
-                >
-                  Clear all
-                </Button>
-              )}
-            </div>
-          </div>
-          
+      <PopoverContent className="w-80 p-0" align="end">
+        <div className="flex items-center justify-between border-b px-3 py-2">
+          <h3 className="font-medium">Downloads</h3>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={fetchActiveJobs}
+            disabled={isLoading}
+          >
+            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
+        <div className="max-h-80 overflow-auto">
           {jobs.length === 0 ? (
-            <p className="text-center text-muted-foreground text-sm">No active downloads</p>
+            <div className="flex flex-col items-center justify-center p-6 text-center">
+              <Download className="mb-2 h-10 w-10 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">No active downloads</p>
+            </div>
           ) : (
-            <div className="space-y-3 max-h-[300px] overflow-y-auto">
+            <div className="space-y-2 p-2">
               {jobs.map((job) => (
-                <div key={job.id} className="border rounded-lg p-3 space-y-2">
+                <div
+                  key={job.id}
+                  className="flex flex-col rounded-md border p-2"
+                >
                   <div className="flex items-center justify-between">
-                    <h4 className="font-medium text-sm">{job.songName}</h4>
+                    <div className="flex items-center gap-2">
+                      {job.isBulk ? (
+                        <Package className="h-4 w-4 text-primary" />
+                      ) : (
+                        <Download className="h-4 w-4 text-primary" />
+                      )}
+                      <span className="text-sm font-medium truncate max-w-[180px]" title={job.songName}>
+                        {job.songName}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {getStatusIcon(job)}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={() => removeJob(job.id)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    <Progress value={job.progress} className="h-1" />
+                  </div>
+                  {job.status === 'completed' && (
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={() => removeJob(job.id)}
+                      size="sm"
+                      className="mt-2 h-7 text-xs"
+                      onClick={() => handleDownload(job.id, job.isBulk)}
                     >
-                      <X className="h-3 w-3" />
+                      <Download className="mr-1 h-3 w-3" />
+                      Download
                     </Button>
-                  </div>
-                  <Progress value={job.progress} className="h-1.5" />
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">
-                      {job.status === 'queued' && 'Queued'}
-                      {job.status === 'downloading' && `${Math.round(job.progress)}%`}
-                      {job.status === 'completed' && 'Completed'}
-                      {job.status === 'error' && (
-                        <span className="text-destructive">{job.error}</span>
-                      )}
-                    </span>
-                    {job.status === 'completed' && job.filePath && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-xs"
-                        onClick={() => handleDownload(job.id)}
-                      >
-                        <Download className="h-3 w-3 mr-1" />
-                        Download
-                      </Button>
-                    )}
-                  </div>
+                  )}
+                  {job.status === 'error' && (
+                    <p className="mt-1 text-xs text-red-500">
+                      {job.error || 'Download failed'}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

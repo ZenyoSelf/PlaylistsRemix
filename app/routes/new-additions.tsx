@@ -23,10 +23,12 @@ import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, Pagi
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
-import { Loader, RefreshCw } from "lucide-react";
+import { Loader, RefreshCw, Package } from "lucide-react";
 import { jsonWithError, jsonWithSuccess } from "remix-toast";
 import { DownloadButton } from "~/components/DownloadButton";
 import { redirect } from "@remix-run/node";
+import { toast } from "~/components/ui/use-toast";
+import { useEffect } from "react";
 
 // Extend the Song type to include the user property
 interface SongWithUser extends Song {
@@ -98,54 +100,105 @@ export async function action({
   request,
 }: ActionFunctionArgs) {
   const formData = await request.formData();
-  const action = formData.get("action") as string;
+  const action = formData.get("action");
 
-  if (action === "refreshSpotify") {
+  // Get user email from session
+  const spotifySession = await getProviderSession(request, "spotify");
+  const youtubeSession = await getProviderSession(request, "youtube");
+  
+  // Get emails from both sessions if available
+  const spotifyEmail = spotifySession?.email || '';
+  const youtubeEmail = youtubeSession?.email || '';
+  
+  // Check if at least one provider is authenticated
+  if (!spotifyEmail && !youtubeEmail) {
+    return jsonWithError({}, "You must be logged in to use this feature");
+  }
+  
+  // Use the first available email
+  const userEmail = spotifyEmail || youtubeEmail;
+
+  if (action === "refresh-spotify") {
     try {
       const result = await refreshSpotifyLibrary(request);
-      return jsonWithSuccess(
-        { success: true },
-        `Successfully refreshed Spotify library. Found ${result.total} new songs.`
-      );
+      return jsonWithSuccess(result, "Spotify library refreshed successfully");
     } catch (error) {
       console.error("Error refreshing Spotify library:", error);
-      return jsonWithError(
-        { success: false },
-        "Failed to refresh Spotify library. Please try again."
-      );
+      return jsonWithError({}, "Failed to refresh Spotify library");
     }
-  }
-
-  if (action === "refreshYoutube") {
+  } else if (action === "refresh-youtube") {
     try {
       const result = await refreshYoutubeLibrary(request);
-      return jsonWithSuccess(
-        { success: true },
-        `Successfully refreshed YouTube library. Found ${result.total} new songs.`
-      );
+      return jsonWithSuccess(result, "YouTube library refreshed successfully");
     } catch (error) {
       console.error("Error refreshing YouTube library:", error);
-      return jsonWithError(
-        { success: false },
-        "Failed to refresh YouTube library. Please try again."
+      return jsonWithError({}, "Failed to refresh YouTube library");
+    }
+  } else if (action === "download-all") {
+    try {
+      // Get filter parameters from form data
+      const platform = formData.get("platform") as string || '';
+      const playlist = formData.get("playlist") as string || '';
+      const search = formData.get("search") as string || '';
+      
+      // Create filter parameters object
+      const filterParams = {
+        platform: platform !== 'all' ? platform : '',
+        playlist: playlist !== 'all' ? playlist : '',
+        search,
+        songStatus: 'not-downloaded', // Only include songs that haven't been downloaded
+      };
+      
+      // Call the bulk download API
+      const response = await fetch(`${request.url.split('/new-additions')[0]}/api/bulk-download`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ filterParams, userId: userEmail }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to queue bulk download');
+      }
+      
+      const data = await response.json();
+      
+      return jsonWithSuccess(
+        { jobId: data.jobId, songCount: data.songCount },
+        `Added ${data.songCount} songs to download queue`
       );
+    } catch (error) {
+      console.error("Error queuing bulk download:", error);
+      return jsonWithError({}, error instanceof Error ? error.message : "Failed to queue bulk download");
     }
   }
 
-  return json({ success: false });
+  return redirect("/new-additions");
 }
 
 export default function NewAdditions() {
-  const { songs, currentPage, totalPages, total, platforms, playlists } = useLoaderData<LoaderData>();
+  const { songs, currentPage, totalPages, platforms, playlists } = useLoaderData<LoaderData>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigation = useNavigation();
-  
-  const isSubmittingAction = (actionValue: string) => {
-    if (navigation.state === "submitting") {
-      const formData = navigation.formData;
-      return formData?.get("action") === actionValue;
+  const actionData = navigation.formData;
+
+  // Show toast notifications for action results
+  useEffect(() => {
+    if (navigation.state === "loading" && navigation.formData?.get("action") === "download-all") {
+      toast({
+        title: "Processing",
+        description: "Preparing songs for download...",
+      });
     }
-    return false;
+  }, [navigation.state, navigation.formData]);
+
+  const isSubmittingAction = (actionValue: string) => {
+    return (
+      navigation.state === "submitting" &&
+      actionData?.get("action") === actionValue
+    );
   };
 
   const handleSearch = (value: string) => {
@@ -178,307 +231,348 @@ export default function NewAdditions() {
     return range;
   };
 
+  const handlePlatformChange = (value: string) => {
+    const newParams = new URLSearchParams(searchParams);
+    if (value && value !== "all") {
+      newParams.set("platform", value);
+    } else {
+      newParams.delete("platform");
+    }
+    newParams.set("page", "1");
+    setSearchParams(newParams);
+  };
+
+  const handlePlaylistChange = (value: string) => {
+    const newParams = new URLSearchParams(searchParams);
+    if (value && value !== "all") {
+      newParams.set("playlist", value);
+    } else {
+      newParams.delete("playlist");
+    }
+    newParams.set("page", "1");
+    setSearchParams(newParams);
+  };
+
   return (
-    <div className="container mx-auto py-8">
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>New Additions</CardTitle>
-          <CardDescription>
-            Songs that have been added to your playlists but haven&apos;t been downloaded yet.
-            Total: {total} songs
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col md:flex-row gap-4 mb-4">
-            <div className="flex-1">
-              <Input
-                type="text"
-                placeholder="Search songs..."
-                defaultValue={searchParams.get("search") || ""}
-                onChange={(e) => handleSearch(e.target.value)}
-                className="w-full"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Form method="post">
-                <input type="hidden" name="action" value="refreshSpotify" />
-                <Button type="submit" variant="outline" disabled={isSubmittingAction("refreshSpotify")}>
-                  {isSubmittingAction("refreshSpotify") ? (
-                    <>
-                      <Loader className="mr-2 h-4 w-4 animate-spin" />
-                      Refreshing Spotify...
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      Refresh Spotify
-                    </>
-                  )}
-                </Button>
-              </Form>
-              <Form method="post">
-                <input type="hidden" name="action" value="refreshYoutube" />
-                <Button type="submit" variant="outline" disabled={isSubmittingAction("refreshYoutube")}>
-                  {isSubmittingAction("refreshYoutube") ? (
-                    <>
-                      <Loader className="mr-2 h-4 w-4 animate-spin" />
-                      Refreshing YouTube...
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      Refresh YouTube
-                    </>
-                  )}
-                </Button>
-              </Form>
-            </div>
-          </div>
+    <div className="container py-8">
+      <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-3xl font-bold">New Additions</h1>
+          <p className="text-muted-foreground">
+            View and download songs that have been added to your playlists since your last refresh.
+          </p>
+        </div>
 
-          <div className="flex flex-col md:flex-row gap-4 mb-4">
-            <div className="flex-1">
-              <Select
-                value={searchParams.get("platform") || "all"}
-                onValueChange={(value) => {
-                  const newParams = new URLSearchParams(searchParams);
-                  if (value && value !== "all") {
-                    newParams.set("platform", value);
-                  } else {
-                    newParams.delete("platform");
-                  }
-                  newParams.set("page", "1");
-                  setSearchParams(newParams);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Filter by platform" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Platforms</SelectItem>
-                  {platforms.map((platform) => (
-                    <SelectItem key={platform} value={platform}>
-                      {platform === "Spotify" ? (
-                        <div className="flex items-center">
-                          <SpotifyLogo className="mr-2 h-4 w-4" />
-                          {platform}
-                        </div>
-                      ) : platform === "Youtube" ? (
-                        <div className="flex items-center">
-                          <YoutubeLogo className="mr-2 h-4 w-4" />
-                          {platform}
-                        </div>
-                      ) : (
-                        platform
-                      )}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex-1">
-              <Select
-                value={searchParams.get("playlist") || "all"}
-                onValueChange={(value) => {
-                  const newParams = new URLSearchParams(searchParams);
-                  if (value && value !== "all") {
-                    newParams.set("playlist", value);
-                  } else {
-                    newParams.delete("playlist");
-                  }
-                  newParams.set("page", "1");
-                  setSearchParams(newParams);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Filter by playlist" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Playlists</SelectItem>
-                  {playlists.map((playlist) => (
-                    <SelectItem key={playlist} value={playlist}>
-                      {playlist}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex-1">
-              <Select
-                value={`${searchParams.get("sortBy") || "platform_added_at"}-${
-                  searchParams.get("sortDirection") || "desc"
-                }`}
-                onValueChange={(value) => {
-                  const [sortBy, sortDirection] = value.split("-");
-                  const newParams = new URLSearchParams(searchParams);
-                  newParams.set("sortBy", sortBy);
-                  newParams.set("sortDirection", sortDirection);
-                  setSearchParams(newParams);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Sort by" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="platform_added_at-desc">Newest First</SelectItem>
-                  <SelectItem value="platform_added_at-asc">Oldest First</SelectItem>
-                  <SelectItem value="title-asc">Title (A-Z)</SelectItem>
-                  <SelectItem value="title-desc">Title (Z-A)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {songs.length === 0 ? (
-        <Card>
-          <CardContent className="p-6 text-center">
-            <p className="text-lg text-gray-500">
-              No new songs found. Try refreshing your library or adjusting your filters.
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <>
+        <div className="flex flex-col gap-4">
           <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Title</TableHead>
-                    <TableHead>Artist</TableHead>
-                    <TableHead>Album</TableHead>
-                    <TableHead>Platform</TableHead>
-                    <TableHead>Added At</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {songs.map((song) => (
-                    <TableRow key={song.id}>
-                      <TableCell className="font-medium">{song.title}</TableCell>
-                      <TableCell>
-                        {song.artist_name?.join(", ") || "Unknown Artist"}
-                      </TableCell>
-                      <TableCell>{song.album || "Unknown Album"}</TableCell>
-                      <TableCell>
-                        {song.platform === "Spotify" ? (
-                          <div className="flex items-center">
-                            <SpotifyLogo className="mr-2 h-4 w-4" />
-                            Spotify
-                          </div>
-                        ) : song.platform === "Youtube" ? (
-                          <div className="flex items-center">
-                            <YoutubeLogo className="mr-2 h-4 w-4" />
-                            YouTube
-                          </div>
+            <CardHeader className="pb-3">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <CardTitle>Library Controls</CardTitle>
+                  <CardDescription>
+                    Refresh your library or filter the results
+                  </CardDescription>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Form method="post">
+                    <input type="hidden" name="action" value="refresh-spotify" />
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      disabled={isSubmittingAction("refresh-spotify")}
+                    >
+                      {isSubmittingAction("refresh-spotify") ? (
+                        <Loader className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                      )}
+                      Refresh Spotify
+                    </Button>
+                  </Form>
+                  <Form method="post">
+                    <input type="hidden" name="action" value="refresh-youtube" />
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      disabled={isSubmittingAction("refresh-youtube")}
+                    >
+                      {isSubmittingAction("refresh-youtube") ? (
+                        <Loader className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                      )}
+                      Refresh YouTube
+                    </Button>
+                  </Form>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col md:flex-row gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1">
+                  <div className="w-full">
+                    <label htmlFor="platform-filter" className="text-sm font-medium mb-1 block">
+                      Platform
+                    </label>
+                    <div id="platform-filter">
+                      <Select
+                        value={searchParams.get("platform") || "all"}
+                        onValueChange={(value) => handlePlatformChange(value)}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="All Platforms" />
+                        </SelectTrigger>
+                        <SelectContent className="min-w-[200px]">
+                          <SelectItem value="all">All Platforms</SelectItem>
+                          {platforms.map((platform) => (
+                            <SelectItem key={platform} value={platform}>
+                              {platform}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="w-full">
+                    <label htmlFor="playlist-filter" className="text-sm font-medium mb-1 block">
+                      Playlist
+                    </label>
+                    <div id="playlist-filter">
+                      <Select
+                        value={searchParams.get("playlist") || "all"}
+                        onValueChange={(value) => handlePlaylistChange(value)}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="All Playlists" />
+                        </SelectTrigger>
+                        <SelectContent className="min-w-[200px] max-h-[300px]">
+                          <SelectItem value="all">All Playlists</SelectItem>
+                          {playlists.map((playlist) => (
+                            <SelectItem key={playlist} value={playlist}>
+                              {playlist}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="w-full">
+                    <label htmlFor="status-filter" className="text-sm font-medium mb-1 block">
+                      Download Status
+                    </label>
+                    <div id="status-filter">
+                      <Select
+                        value={searchParams.get("songStatus") || "not-downloaded"}
+                        onValueChange={(value) => {
+                          const newParams = new URLSearchParams(searchParams);
+                          newParams.set("songStatus", value);
+                          newParams.set("page", "1");
+                          setSearchParams(newParams);
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="All Songs" />
+                        </SelectTrigger>
+                        <SelectContent className="min-w-[200px]">
+                          <SelectItem value="all">All Songs</SelectItem>
+                          <SelectItem value="downloaded">Downloaded</SelectItem>
+                          <SelectItem value="not-downloaded">Not Downloaded</SelectItem>
+                          <SelectItem value="local">Local Files</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <label htmlFor="search-input" className="text-sm font-medium mb-1 block">
+                    Search
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="search-input"
+                      type="text"
+                      placeholder="Search by title or artist..."
+                      value={searchParams.get("search") || ""}
+                      onChange={(e) => handleSearch(e.target.value)}
+                      className="w-full"
+                    />
+                    <Form method="post" className="flex-shrink-0">
+                      <input type="hidden" name="action" value="download-all" />
+                      <input type="hidden" name="platform" value={searchParams.get("platform") || "all"} />
+                      <input type="hidden" name="playlist" value={searchParams.get("playlist") || "all"} />
+                      <input type="hidden" name="search" value={searchParams.get("search") || ""} />
+                      <Button 
+                        type="submit" 
+                        variant="default"
+                        disabled={isSubmittingAction("download-all") || songs.length === 0}
+                        title={songs.length === 0 ? "No songs to download" : "Download all filtered songs"}
+                        className="whitespace-nowrap"
+                      >
+                        {isSubmittingAction("download-all") ? (
+                          <Loader className="mr-2 h-4 w-4 animate-spin" />
                         ) : (
-                          song.platform
+                          <Package className="mr-2 h-4 w-4" />
                         )}
-                      </TableCell>
-                      <TableCell>
-                        {new Date(song.platform_added_at).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell>
-                        <DownloadButton songId={song.id.toString()} userId={song.user} />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                        Add All to Download
+                      </Button>
+                    </Form>
+                  </div>
+                </div>
+              </div>
             </CardContent>
           </Card>
 
-          {totalPages > 1 && (
-            <div className="mt-4 flex justify-center">
-              <Pagination>
-                <PaginationContent>
-                  {currentPage > 1 && (
-                    <PaginationItem>
-                      <PaginationPrevious
-                        href="#"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handlePageChange(currentPage - 1);
-                        }}
-                      />
-                    </PaginationItem>
-                  )}
+          {songs.length === 0 ? (
+            <Card>
+              <CardContent className="p-6 text-center">
+                <p className="text-lg text-gray-500">
+                  No new songs found. Try refreshing your library or adjusting your filters.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <Card>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Title</TableHead>
+                        <TableHead>Artist</TableHead>
+                        <TableHead>Album</TableHead>
+                        <TableHead>Platform</TableHead>
+                        <TableHead>Added At</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {songs.map((song) => (
+                        <TableRow key={song.id}>
+                          <TableCell className="font-medium">{song.title}</TableCell>
+                          <TableCell>
+                            {song.artist_name?.join(", ") || "Unknown Artist"}
+                          </TableCell>
+                          <TableCell>{song.album || "Unknown Album"}</TableCell>
+                          <TableCell>
+                            {song.platform === "Spotify" ? (
+                              <div className="flex items-center">
+                                <SpotifyLogo className="mr-2 h-4 w-4" />
+                                Spotify
+                              </div>
+                            ) : song.platform === "Youtube" ? (
+                              <div className="flex items-center">
+                                <YoutubeLogo className="mr-2 h-4 w-4" />
+                                YouTube
+                              </div>
+                            ) : (
+                              song.platform
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {new Date(song.platform_added_at).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell>
+                            <DownloadButton songId={song.id.toString()} userId={song.user} />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
 
-                  {currentPage > 3 && (
-                    <>
-                      <PaginationItem>
-                        <PaginationLink
-                          href="#"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            handlePageChange(1);
-                          }}
-                        >
-                          1
-                        </PaginationLink>
-                      </PaginationItem>
-                      {currentPage > 4 && (
+              {totalPages > 1 && (
+                <div className="mt-4 flex justify-center">
+                  <Pagination>
+                    <PaginationContent>
+                      {currentPage > 1 && (
                         <PaginationItem>
-                          <span className="px-4">...</span>
+                          <PaginationPrevious
+                            href="#"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handlePageChange(currentPage - 1);
+                            }}
+                          />
                         </PaginationItem>
                       )}
-                    </>
-                  )}
 
-                  {getPaginationRange().map((page) => (
-                    <PaginationItem key={page}>
-                      <PaginationLink
-                        href="#"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handlePageChange(page);
-                        }}
-                        isActive={page === currentPage}
-                      >
-                        {page}
-                      </PaginationLink>
-                    </PaginationItem>
-                  ))}
+                      {currentPage > 3 && (
+                        <>
+                          <PaginationItem>
+                            <PaginationLink
+                              href="#"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                handlePageChange(1);
+                              }}
+                            >
+                              1
+                            </PaginationLink>
+                          </PaginationItem>
+                          {currentPage > 4 && (
+                            <PaginationItem>
+                              <span className="px-4">...</span>
+                            </PaginationItem>
+                          )}
+                        </>
+                      )}
 
-                  {currentPage < totalPages - 2 && (
-                    <>
-                      {currentPage < totalPages - 3 && (
+                      {getPaginationRange().map((page) => (
+                        <PaginationItem key={page}>
+                          <PaginationLink
+                            href="#"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handlePageChange(page);
+                            }}
+                            isActive={page === currentPage}
+                          >
+                            {page}
+                          </PaginationLink>
+                        </PaginationItem>
+                      ))}
+
+                      {currentPage < totalPages - 2 && (
+                        <>
+                          {currentPage < totalPages - 3 && (
+                            <PaginationItem>
+                              <span className="px-4">...</span>
+                            </PaginationItem>
+                          )}
+                          <PaginationItem>
+                            <PaginationLink
+                              href="#"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                handlePageChange(totalPages);
+                              }}
+                            >
+                              {totalPages}
+                            </PaginationLink>
+                          </PaginationItem>
+                        </>
+                      )}
+
+                      {currentPage < totalPages && (
                         <PaginationItem>
-                          <span className="px-4">...</span>
+                          <PaginationNext
+                            href="#"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handlePageChange(currentPage + 1);
+                            }}
+                          />
                         </PaginationItem>
                       )}
-                      <PaginationItem>
-                        <PaginationLink
-                          href="#"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            handlePageChange(totalPages);
-                          }}
-                        >
-                          {totalPages}
-                        </PaginationLink>
-                      </PaginationItem>
-                    </>
-                  )}
-
-                  {currentPage < totalPages && (
-                    <PaginationItem>
-                      <PaginationNext
-                        href="#"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handlePageChange(currentPage + 1);
-                        }}
-                      />
-                    </PaginationItem>
-                  )}
-                </PaginationContent>
-              </Pagination>
-            </div>
+                    </PaginationContent>
+                  </Pagination>
+                </div>
+              )}
+            </>
           )}
-        </>
-      )}
+        </div>
+      </div>
     </div>
   );
 }

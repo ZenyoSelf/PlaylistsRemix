@@ -233,7 +233,7 @@ export default function Updates() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 ">
       {/* Refresh Card */}
       <Card>
         <CardContent className="p-4">
@@ -289,9 +289,10 @@ export default function Updates() {
       </Card>
 
       {/* Search and Filters */}
+      <div className="relative mx-auto">
       <Card>
-        <CardContent className="p-4 space-y-4">
-          <div className="flex flex-wrap gap-4">
+        <CardContent className="p-4 space-y-4 relative">
+          <div className="flex flex-wrap gap-4 relative">
             <Input
               placeholder="Search songs..."
               value={searchParams.get("search") || ""}
@@ -370,7 +371,7 @@ export default function Updates() {
           </div>
         </CardContent>
       </Card>
-
+      </div>
       {/* Songs Table */}
       <Card>
         <CardContent className="p-4">
@@ -415,7 +416,19 @@ export default function Updates() {
                   <TableCell>
                     {song.artist_name?.join(", ") || ""}
                   </TableCell>
-                  <TableCell>{song.platform}</TableCell>
+                  <TableCell>{song.platform === "Spotify" ? (
+                              <div className="flex items-center">
+                                <SpotifyLogo className="mr-2 h-4 w-4" />
+                                Spotify
+                              </div>
+                            ) : song.platform === "Youtube" ? (
+                              <div className="flex items-center">
+                                <YoutubeLogo className="mr-2 h-4 w-4" />
+                                YouTube
+                              </div>
+                            ) : (
+                              song.platform
+                            )}</TableCell>
                   <TableCell>
                     {(() => {
                       try {

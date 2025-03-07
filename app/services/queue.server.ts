@@ -3,11 +3,15 @@ import { createBullBoard } from '@bull-board/api';
 import { BullAdapter } from '@bull-board/api/bullAdapter';
 import { ExpressAdapter } from '@bull-board/express';
 import { cleanupOldFiles } from '~/workers/cleanupWorker.server';
+import { Song } from '~/types/customs';
 
 // Define job data interface
 export interface DownloadJobData {
-  songId: string;
+  songId?: string;
   userId: string;
+  type?: 'single' | 'bulk';
+  songs?: Song[];
+  jobId?: string;
 }
 
 // Create download queue
@@ -27,36 +31,45 @@ export const downloadQueue = new Queue<DownloadJobData>('download-queue', {
   },
 });
 
-// Create cleanup queue with recurring job
+// Create cleanup queue
 export const cleanupQueue = new Queue('cleanup-queue', {
   redis: {
     host: 'localhost',
     port: 6379,
-  }
+  },
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000,
+    },
+    removeOnComplete: true,
+    removeOnFail: true,
+  },
 });
 
-// Add recurring job to run every day at midnight
+// Process cleanup jobs
+cleanupQueue.process(async (job) => {
+  console.log('Running cleanup job...');
+  const result = await cleanupOldFiles();
+  return { deletedCount: result.deletedCount, totalSize: result.totalSize };
+});
+
+// Schedule cleanup job to run every 2 days
 cleanupQueue.add(
   {},
   {
     repeat: {
-      cron: '0 0 * * *' // Run at midnight every day
-    }
+      cron: '0 0 */2 * *', // Every 2 days at midnight
+    },
   }
 );
-
-// Process cleanup jobs
-cleanupQueue.process(async () => {
-  await cleanupOldFiles();
-  return { success: true };
-});
 
 // Setup Bull Board for monitoring
 const serverAdapter = new ExpressAdapter();
 createBullBoard({
-  queues: [new BullAdapter(downloadQueue)],
+  queues: [new BullAdapter(downloadQueue), new BullAdapter(cleanupQueue)],
   serverAdapter,
 });
 
-// Export the middleware for use in your Express app
-export const bullBoardMiddleware = serverAdapter.getRouter(); 
+export { serverAdapter }; 
