@@ -11,6 +11,7 @@ export interface DownloadJobData {
   userId: string;
   type?: 'single' | 'bulk';
   songs?: Song[];
+  bulkSongIds?: string[];
   jobId?: string;
 }
 

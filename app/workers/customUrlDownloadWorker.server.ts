@@ -1,6 +1,6 @@
 import { downloadQueue } from '~/services/queue.server';
 import path from 'path';
-import { downloadFromCustomUrl } from '~/services/customUrlDownload.server';
+import { downloadFromCustomUrl } from '~/services/ytDownload.server';
 import { getSongById, updateSongDownloadStatus, updateSongLocalStatus } from '~/services/db.server';
 
 // Instead of registering a new processor, we'll extend the existing one

@@ -1,10 +1,17 @@
--- User table
+-- User table with improved structure
 CREATE TABLE IF NOT EXISTS user (
-    user TEXT PRIMARY KEY,
-    last_refresh TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_email TEXT UNIQUE,
+    password TEXT,
+    user_spotify TEXT UNIQUE,
+    user_youtube TEXT UNIQUE,
     last_refresh_spotify TEXT,
     last_refresh_youtube TEXT
 );
+
+-- Insert test user if it doesn't exist
+INSERT OR IGNORE INTO user (user_email, password) 
+VALUES ('test@test.ch', '$2b$10$/gdxc070n2vS8RGfyqwUsuQsQhG7SiTvtqr1ntlJLdkqVcGpy0yFy');
 
 -- Song table (without playlist field)
 CREATE TABLE IF NOT EXISTS song (
@@ -18,8 +25,8 @@ CREATE TABLE IF NOT EXISTS song (
     downloaded BOOLEAN,
     local BOOLEAN DEFAULT 0,
     platform_added_at TEXT,
-    user TEXT,
-    FOREIGN KEY(user) REFERENCES user(user)
+    user_id INTEGER,
+    FOREIGN KEY(user_id) REFERENCES user(id)
 );
 
 -- Playlist table
@@ -29,9 +36,9 @@ CREATE TABLE IF NOT EXISTS playlist (
     name TEXT NOT NULL,
     platform TEXT NOT NULL,
     owner_id TEXT,
-    user TEXT,
+    user_id INTEGER,
     UNIQUE(platform_playlist_id, platform),
-    FOREIGN KEY(user) REFERENCES user(user)
+    FOREIGN KEY(user_id) REFERENCES user(id)
 );
 
 -- Junction table for songs and playlists
@@ -45,8 +52,8 @@ CREATE TABLE IF NOT EXISTS song_playlist (
 );
 
 -- Create indexes for better performance
-CREATE INDEX IF NOT EXISTS idx_song_user ON song(user);
-CREATE INDEX IF NOT EXISTS idx_playlist_user ON playlist(user);
+CREATE INDEX IF NOT EXISTS idx_song_user ON song(user_id);
+CREATE INDEX IF NOT EXISTS idx_playlist_user ON playlist(user_id);
 CREATE INDEX IF NOT EXISTS idx_song_playlist_song ON song_playlist(song_id);
 CREATE INDEX IF NOT EXISTS idx_song_playlist_playlist ON song_playlist(playlist_id);
 CREATE INDEX IF NOT EXISTS idx_playlist_platform ON playlist(platform);

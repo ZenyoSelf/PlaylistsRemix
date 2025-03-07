@@ -1,4 +1,4 @@
-import { json, LinksFunction, LoaderFunctionArgs } from "@remix-run/node";
+import { json, LinksFunction, LoaderFunctionArgs, redirect } from "@remix-run/node";
 import {
   Links,
   Meta,
@@ -6,6 +6,7 @@ import {
   Scripts,
   ScrollRestoration,
   useLoaderData,
+  useLocation,
 } from "@remix-run/react";
 import styles from "./global.css?url";
 import Header from "./components/header";
@@ -13,18 +14,45 @@ import { Toaster } from "~/components/ui/toaster";
 import { getToast } from "remix-toast";
 import { useEffect } from "react";
 import { useToast } from "./hooks/use-toast";
+import { sessionStorage } from "~/services/session.server";
 
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: styles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { toast, headers } = await getToast(request);
-  return json({ toast }, { headers });
+  
+  // Get the current URL
+  const url = new URL(request.url);
+  const path = url.pathname;
+  
+  // Public routes that don't require authentication
+  const publicRoutes = ['/login', '/auth/spotify', '/auth/google', '/auth/spotify/callback', '/auth/google/callback'];
+  
+  // Check if the current route is a public route
+  const isPublicRoute = publicRoutes.some(route => path.startsWith(route));
+  
+  if (!isPublicRoute) {
+    // Check if user is logged in
+    const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+    const userEmail = session.get("userEmail");
+    
+    if (!userEmail) {
+      // User is not logged in, redirect to login page
+      return redirect("/login");
+    }
+  }
+  
+  return json({ toast, path }, { headers });
 };
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const loaderData = useLoaderData<typeof loader>();
   const { toast } = useToast();
+  const location = useLocation();
+  
+  // Check if we're on the login page
+  const isLoginPage = location.pathname === "/login";
 
   useEffect(() => {
     if (loaderData?.toast?.type === "error") {
@@ -51,13 +79,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
       </head>
-      <body className=" relative min-h-screen">
+      <body className="relative min-h-screen">
         <div className="mx-auto lg:max-w-7xl">
-        <Header />
-        {children}
-        <ScrollRestoration />
-        <Scripts />
-        <Toaster />
+          {!isLoginPage && <Header />}
+          {children}
+          <ScrollRestoration />
+          <Scripts />
+          <Toaster />
         </div>
       </body>
     </html>

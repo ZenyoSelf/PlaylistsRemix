@@ -3,10 +3,10 @@ import {
   NavigationMenuList,
   NavigationMenuItem,
 } from "@radix-ui/react-navigation-menu";
-import { Link } from "@remix-run/react";
+import { Link, Form } from "@remix-run/react";
 import styles from "~/global.css?url";
 import { LinksFunction } from "@remix-run/node";
-import { Music, Link as LinkIcon, Download, UserCircle } from "lucide-react";
+import { Music, Link as LinkIcon, Download, UserCircle, LogOut } from "lucide-react";
 import { DownloadManager } from "./DownloadManager";
 import { Button } from "./ui/button";
 
@@ -19,7 +19,7 @@ export default function Header() {
         {/* Logo and App Name */}
         <div className="flex items-center gap-2">
           <Link 
-            to="/" 
+            to="/dashboard" 
             className="flex items-center gap-2 transition-colors hover:text-primary"
           >
             <Music className="h-6 w-6" />
@@ -60,6 +60,19 @@ export default function Header() {
                   Custom URL
                 </Link>
               </NavigationMenuItem>
+              
+              <NavigationMenuItem>
+                <Form method="post" action="/logout">
+                  <Button
+                    type="submit"
+                    variant="ghost"
+                    className="group inline-flex h-9 w-max items-center justify-center rounded-md bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[active]:bg-accent/50 data-[state=open]:bg-accent/50"
+                  >
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Logout
+                  </Button>
+                </Form>
+              </NavigationMenuItem>
             </NavigationMenuList>
             
             {/* Mobile Navigation */}
@@ -79,6 +92,11 @@ export default function Header() {
                   <LinkIcon className="h-5 w-5" />
                 </Link>
               </Button>
+              <Form method="post" action="/logout">
+                <Button variant="ghost" size="icon" type="submit">
+                  <LogOut className="h-5 w-5" />
+                </Button>
+              </Form>
             </div>
           </NavigationMenu>
 

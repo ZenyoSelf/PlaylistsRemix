@@ -6,9 +6,14 @@ node_modules
 
 # Database files
 app/db/songs.db
+app/db/backups/*
+app/db/migrations/*
 
 # External utilities
 app/utils/ffmpeg.exe
 app/utils/ffplay.exe
 app/utils/ffprobe.exe
 app/utils/yt-dlp.exe
+
+# Temporary files
+app/tmp/*

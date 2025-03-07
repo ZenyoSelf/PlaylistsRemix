@@ -1,6 +1,6 @@
-import { ActionFunctionArgs, json, LoaderFunctionArgs } from "@remix-run/node";
+import { ActionFunctionArgs, json, LoaderFunctionArgs, redirect } from "@remix-run/node";
 import { useLoaderData, useSearchParams, Form, useNavigation } from "@remix-run/react";
-import { getUserSongsFromDB, getFilters, refreshSpotifyLibrary, refreshYoutubeLibrary } from "~/services/db.server";
+import { getUserSongsFromDB, getFilters, refreshSpotifyLibrary, refreshYoutubeLibrary, getLatestRefresh, markSongsAsDownloadedBeforeDate } from "~/services/db.server";
 import { getProviderSession } from "~/services/auth.server";
 import { Song } from "~/types/customs";
 import {
@@ -23,12 +23,23 @@ import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, Pagi
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
-import { Loader, RefreshCw, Package } from "lucide-react";
+import { Loader, RefreshCw, Package, Clock, CheckSquare } from "lucide-react";
 import { jsonWithError, jsonWithSuccess } from "remix-toast";
 import { DownloadButton } from "~/components/DownloadButton";
-import { redirect } from "@remix-run/node";
 import { toast } from "~/components/ui/use-toast";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "~/components/ui/dialog";
+import { Checkbox } from "~/components/ui/checkbox";
+import { Label } from "~/components/ui/label";
+import { DatePicker } from "~/components/ui/date-picker";
 
 // Extend the Song type to include the user property
 interface SongWithUser extends Song {
@@ -42,16 +53,30 @@ interface LoaderData {
   total: number;
   platforms: string[];
   playlists: string[];
+  lastRefreshSpotify: string | null;
+  lastRefreshYoutube: string | null;
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
   // Check if the user is authenticated with either provider
   const spotifySession = await getProviderSession(request, "spotify");
   const youtubeSession = await getProviderSession(request, "youtube");
-  
+
   // If not authenticated with either provider, redirect to account manager
   if (!spotifySession && !youtubeSession) {
     return redirect("/accountmanager");
+  }
+
+  // Get last refresh times
+  let lastRefreshSpotify = null;
+  let lastRefreshYoutube = null;
+
+  if (spotifySession?.email) {
+    lastRefreshSpotify = await getLatestRefresh(spotifySession.email, 'spotify');
+  }
+
+  if (youtubeSession?.email) {
+    lastRefreshYoutube = await getLatestRefresh(youtubeSession.email, 'youtube');
   }
 
   const url = new URL(request.url);
@@ -61,7 +86,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const search = url.searchParams.get("search") || "";
   const sortBy = url.searchParams.get("sortBy") || "platform_added_at";
   const sortDirection = url.searchParams.get("sortDirection") || "desc";
-  
+  const onlyMyPlaylists = url.searchParams.get("onlyMyPlaylists") === "true";
+
   try {
     // Get songs that haven't been downloaded yet
     // Limit to 10 items per page to reduce simultaneous file system checks
@@ -74,6 +100,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       sortBy,
       sortDirection: sortDirection as "asc" | "desc",
       itemsPerPage: 10, // Reduced from default 20 to limit simultaneous file system checks
+      onlyMyPlaylists, // Add this parameter to filter by user's playlists
     });
 
     // Get filter options
@@ -86,11 +113,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
       total,
       platforms,
       playlists,
+      lastRefreshSpotify,
+      lastRefreshYoutube,
     });
   } catch (error) {
     console.error("Error loading songs:", error);
     return jsonWithError(
-      { songs: [], currentPage: 1, totalPages: 0, total: 0, platforms: [], playlists: [] },
+      {
+        songs: [],
+        currentPage: 1,
+        totalPages: 0,
+        total: 0,
+        platforms: [],
+        playlists: [],
+        lastRefreshSpotify: null,
+        lastRefreshYoutube: null,
+      },
       "Failed to load songs. Please try again."
     );
   }
@@ -105,16 +143,16 @@ export async function action({
   // Get user email from session
   const spotifySession = await getProviderSession(request, "spotify");
   const youtubeSession = await getProviderSession(request, "youtube");
-  
+
   // Get emails from both sessions if available
   const spotifyEmail = spotifySession?.email || '';
   const youtubeEmail = youtubeSession?.email || '';
-  
+
   // Check if at least one provider is authenticated
   if (!spotifyEmail && !youtubeEmail) {
     return jsonWithError({}, "You must be logged in to use this feature");
   }
-  
+
   // Use the first available email
   const userEmail = spotifyEmail || youtubeEmail;
 
@@ -140,7 +178,7 @@ export async function action({
       const platform = formData.get("platform") as string || '';
       const playlist = formData.get("playlist") as string || '';
       const search = formData.get("search") as string || '';
-      
+
       // Create filter parameters object
       const filterParams = {
         platform: platform !== 'all' ? platform : '',
@@ -148,23 +186,23 @@ export async function action({
         search,
         songStatus: 'not-downloaded', // Only include songs that haven't been downloaded
       };
-      
+
       // Call the bulk download API
-      const response = await fetch(`${request.url.split('/new-additions')[0]}/api/bulk-download`, {
+      const response = await fetch(`/api/bulk-download`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ filterParams, userId: userEmail }),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Failed to queue bulk download');
       }
-      
+
       const data = await response.json();
-      
+
       return jsonWithSuccess(
         { jobId: data.jobId, songCount: data.songCount },
         `Added ${data.songCount} songs to download queue`
@@ -173,17 +211,43 @@ export async function action({
       console.error("Error queuing bulk download:", error);
       return jsonWithError({}, error instanceof Error ? error.message : "Failed to queue bulk download");
     }
+  } else if (action === "mark-as-downloaded") {
+    try {
+      const beforeDate = formData.get("beforeDate") as string;
+      const onlyMyPlaylists = formData.get("onlyMyPlaylists") === "true";
+      
+      if (!beforeDate) {
+        return jsonWithError({}, "Please select a date");
+      }
+      
+      // Convert date to ISO string if it's not already
+      const dateObj = new Date(beforeDate);
+      const isoDate = dateObj.toISOString();
+      
+      // Mark songs as downloaded
+      const updatedCount = await markSongsAsDownloadedBeforeDate(request, isoDate, onlyMyPlaylists);
+      
+      return jsonWithSuccess(
+        { updatedCount },
+        `Marked ${updatedCount} songs as downloaded`
+      );
+    } catch (error) {
+      console.error("Error marking songs as downloaded:", error);
+      return jsonWithError({}, error instanceof Error ? error.message : "Failed to mark songs as downloaded");
+    }
   }
 
   return redirect("/new-additions");
 }
 
 export default function NewAdditions() {
-  const { songs, currentPage, totalPages, platforms, playlists } = useLoaderData<LoaderData>();
+  const { songs, currentPage, totalPages, platforms, playlists, lastRefreshSpotify, lastRefreshYoutube } = useLoaderData<LoaderData>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigation = useNavigation();
   const actionData = navigation.formData;
-
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
+  const [onlyMyPlaylists, setOnlyMyPlaylists] = useState(false);
   // Show toast notifications for action results
   useEffect(() => {
     if (navigation.state === "loading" && navigation.formData?.get("action") === "download-all") {
@@ -253,6 +317,24 @@ export default function NewAdditions() {
     setSearchParams(newParams);
   };
 
+  // Format date for display
+  const formatDate = (dateString: string | null) => {
+    if (!dateString) return "Never";
+    try {
+      const date = new Date(dateString);
+      // Use a specific format instead of toLocaleString() to ensure consistency between server and client
+      const day = date.getDate().toString().padStart(2, '0');
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      const year = date.getFullYear();
+      const hours = date.getHours().toString().padStart(2, '0');
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      const seconds = date.getSeconds().toString().padStart(2, '0');
+      return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
+    } catch (e) {
+      return "Invalid date";
+    }
+  };
+
   return (
     <div className="container py-8">
       <div className="flex flex-col gap-6">
@@ -276,6 +358,10 @@ export default function NewAdditions() {
                 <div className="flex flex-wrap gap-2">
                   <Form method="post">
                     <input type="hidden" name="action" value="refresh-spotify" />
+                    <div className="text-xs text-muted-foreground mb-1 flex items-center justify-end gap-1">
+                      <Clock className="h-3 w-3" />
+                      Last sync: {formatDate(lastRefreshSpotify)}
+                    </div>
                     <Button
                       type="submit"
                       variant="outline"
@@ -291,6 +377,10 @@ export default function NewAdditions() {
                   </Form>
                   <Form method="post">
                     <input type="hidden" name="action" value="refresh-youtube" />
+                    <div className="text-xs text-muted-foreground mb-1 flex items-center justify-end gap-1">
+                      <Clock className="h-3 w-3" />
+                      Last sync: {formatDate(lastRefreshYoutube)}
+                    </div>
                     <Button
                       type="submit"
                       variant="outline"
@@ -357,29 +447,24 @@ export default function NewAdditions() {
                     </div>
                   </div>
                   <div className="w-full">
-                    <label htmlFor="status-filter" className="text-sm font-medium mb-1 block">
-                      Download Status
+                    <label htmlFor="my-playlists-filter" className="text-sm font-medium mb-1 block">
+                      Ownership
                     </label>
-                    <div id="status-filter">
-                      <Select
-                        value={searchParams.get("songStatus") || "not-downloaded"}
-                        onValueChange={(value) => {
-                          const newParams = new URLSearchParams(searchParams);
-                          newParams.set("songStatus", value);
-                          newParams.set("page", "1");
-                          setSearchParams(newParams);
-                        }}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="All Songs" />
-                        </SelectTrigger>
-                        <SelectContent className="min-w-[200px]">
-                          <SelectItem value="all">All Songs</SelectItem>
-                          <SelectItem value="downloaded">Downloaded</SelectItem>
-                          <SelectItem value="not-downloaded">Not Downloaded</SelectItem>
-                          <SelectItem value="local">Local Files</SelectItem>
-                        </SelectContent>
-                      </Select>
+                    <div id="my-playlists-filter" className="flex items-center h-10 px-3 border rounded-md">
+                      <Checkbox id="only-my-playlists" checked={searchParams.get("onlyMyPlaylists") === "true"} onCheckedChange={(checked) => {
+                         const newParams = new URLSearchParams(searchParams);
+                        if(checked === true){
+                          newParams.set("onlyMyPlaylists", "true");
+                        } else {
+                          newParams.delete("onlyMyPlaylists");
+                        }
+                        newParams.set("page", "1");
+                        setSearchParams(newParams);
+                      }}></Checkbox>
+
+                      <label htmlFor="only-my-playlists" className="text-sm">
+                        Only my playlists
+                      </label>
                     </div>
                   </div>
                 </div>
@@ -396,13 +481,93 @@ export default function NewAdditions() {
                       onChange={(e) => handleSearch(e.target.value)}
                       className="w-full"
                     />
+                    <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                      <DialogTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className="whitespace-nowrap"
+                          title="Mark songs as downloaded without actually downloading them"
+                        >
+                          <CheckSquare className="mr-2 h-4 w-4" />
+                          Mark as Downloaded
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-[425px]">
+                        <DialogHeader>
+                          <DialogTitle>Mark Songs as Downloaded</DialogTitle>
+                          <DialogDescription>
+                            Mark songs added before a specific date as downloaded without actually downloading them.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <Form 
+                          method="post" 
+                          onSubmit={() => {
+                            setIsDialogOpen(false);
+                          }}
+                        >
+                          <input type="hidden" name="action" value="mark-as-downloaded" />
+                          <input 
+                            type="hidden" 
+                            name="beforeDate" 
+                            value={selectedDate ? selectedDate.toISOString() : new Date().toISOString()} 
+                          />
+                          <div className="grid gap-4 py-4">
+                            <div className="grid grid-cols-4 items-center gap-4">
+                              <Label htmlFor="date-picker" className="text-right">
+                                Before Date
+                              </Label>
+                              <div className="col-span-3">
+                                <DatePicker 
+                                  date={selectedDate} 
+                                  setDate={setSelectedDate} 
+                                />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-4 items-center gap-4">
+                              <Label htmlFor="onlyMyPlaylists" className="text-right">
+                                Filter
+                              </Label>
+                              <div className="flex items-center space-x-2 col-span-3">
+                                <Checkbox 
+                                  id="onlyMyPlaylists" 
+                                  name="onlyMyPlaylists" 
+                                  value="true"
+                                  checked={onlyMyPlaylists}
+                                  onCheckedChange={(checked) => {
+                                    setOnlyMyPlaylists(checked === true);
+                                  }}
+                                />
+                                <label
+                                  htmlFor="onlyMyPlaylists"
+                                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                                >
+                                  Only my playlists
+                                </label>
+                              </div>
+                            </div>
+                          </div>
+                          <DialogFooter>
+                            <Button 
+                              type="submit" 
+                              disabled={isSubmittingAction("mark-as-downloaded")}
+                            >
+                              {isSubmittingAction("mark-as-downloaded") ? (
+                                <Loader className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                "Mark as Downloaded"
+                              )}
+                            </Button>
+                          </DialogFooter>
+                        </Form>
+                      </DialogContent>
+                    </Dialog>
                     <Form method="post" className="flex-shrink-0">
                       <input type="hidden" name="action" value="download-all" />
                       <input type="hidden" name="platform" value={searchParams.get("platform") || "all"} />
                       <input type="hidden" name="playlist" value={searchParams.get("playlist") || "all"} />
                       <input type="hidden" name="search" value={searchParams.get("search") || ""} />
-                      <Button 
-                        type="submit" 
+                      <Button
+                        type="submit"
                         variant="default"
                         disabled={isSubmittingAction("download-all") || songs.length === 0}
                         title={songs.length === 0 ? "No songs to download" : "Download all filtered songs"}
@@ -438,9 +603,10 @@ export default function NewAdditions() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Title</TableHead>
-                        <TableHead>Artist</TableHead>
-                        <TableHead>Album</TableHead>
+                        <TableHead className="w-40">Artist</TableHead>
+                        <TableHead className="w-40">Album</TableHead>
                         <TableHead>Platform</TableHead>
+                        <TableHead>Playlists</TableHead>
                         <TableHead>Added At</TableHead>
                         <TableHead>Actions</TableHead>
                       </TableRow>
@@ -469,7 +635,22 @@ export default function NewAdditions() {
                             )}
                           </TableCell>
                           <TableCell>
-                            {new Date(song.platform_added_at).toLocaleDateString()}
+                            {song.playlists && song.playlists.length > 0 ? (
+                              <div className="max-w-[200px] truncate">
+                                {song.playlists.map(playlist => playlist.name).join(", ")}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground italic">None</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {(() => {
+                              const date = new Date(song.platform_added_at);
+                              const day = date.getDate().toString().padStart(2, '0');
+                              const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                              const year = date.getFullYear();
+                              return `${day}.${month}.${year}`;
+                            })()}
                           </TableCell>
                           <TableCell>
                             <DownloadButton songId={song.id.toString()} userId={song.user} />

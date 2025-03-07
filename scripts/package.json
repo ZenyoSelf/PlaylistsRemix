@@ -1,0 +1,16 @@
+{
+  "name": "playlist-remix-migrations",
+  "version": "1.0.0",
+  "description": "Database migrations for Playlist Remix app",
+  "type": "module",
+  "scripts": {
+    "migrate": "node run-migrations.js",
+    "add-test-user": "node add-test-user.js",
+    "generate-hash": "node generate-hash.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "sqlite": "^4.2.1",
+    "sqlite3": "^5.1.6"
+  }
+} 

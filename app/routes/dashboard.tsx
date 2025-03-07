@@ -1,6 +1,6 @@
-import type { MetaFunction } from "@remix-run/node";
-import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
-import { Link } from "@remix-run/react";
+import type { MetaFunction, LoaderFunctionArgs } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
+import { Link, useLoaderData } from "@remix-run/react";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Download, RefreshCw } from "lucide-react";
@@ -14,22 +14,27 @@ export const meta: MetaFunction = () => {
 };
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  // Check if user is logged in
   const session = await sessionStorage.getSession(request.headers.get("Cookie"));
   const userEmail = session.get("userEmail");
   
-  // If user is logged in, redirect to dashboard
-  if (userEmail) {
-    return redirect("/dashboard");
+  if (!userEmail) {
+    // If not logged in, redirect to login page
+    return redirect("/login");
   }
   
-  // Otherwise, redirect to login page
-  return redirect("/login");
+  return json({ userEmail });
 }
 
-export default function Index() {
+export default function Dashboard() {
+  const { userEmail } = useLoaderData<typeof loader>();
+  
   return (
     <div className="container mx-auto py-8">
       <h1 className="text-3xl font-bold mb-6">Welcome to your music dashboard</h1>
+      {userEmail && (
+        <p className="text-sm text-muted-foreground mb-4">Logged in as: {userEmail}</p>
+      )}
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <Card>
@@ -84,4 +89,4 @@ export default function Index() {
       </div>
     </div>
   );
-}
+} 

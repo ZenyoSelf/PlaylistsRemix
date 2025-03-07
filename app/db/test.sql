@@ -10,7 +10,7 @@ DROP TABLE IF EXISTS playlist;
 DROP TABLE IF EXISTS song;
 DROP TABLE IF EXISTS user;
 
-
+DELETE FROM user;
 
 SELECT sp.*, s.title as song_title, p.name as playlist_name, p.owner_id as playlist_owner
 FROM song_playlist sp
@@ -23,5 +23,45 @@ UPDATE user SET last_refresh = NULL WHERE user = 'arnaudsoltermann@gmail.com';
 
 INSERT INTO user (user, last_refresh, last_refresh_spotify, last_refresh_youtube) VALUES ('arnaudsoltermann@gmail.com',  NULL, NULL, NULL);
 
+select * from playlist;
+SELECT * FROM user;
+SELECT * FROM song;
 
-SELECT * FROM 
+
+
+delete FROM song;
+delete FROM playlist;
+delete FROM user where id = 2;
+delete FROM user where id = 3;
+
+select * from playlist where name = "YouTubeLikedVideos";
+
+UPDATE user SET last_refresh_spotify = NULL;
+UPDATE user SET last_refresh_youtube = NULL;
+
+delete from song_playlist where playlist_id = 190;
+
+
+DELETE FROM song_playlist 
+WHERE playlist_id IN (
+    SELECT id FROM playlist WHERE name = 'YouTubeLikedVideos'
+);
+
+DELETE FROM song 
+WHERE id IN (
+    SELECT s.id 
+    FROM song s
+    JOIN song_playlist sp ON s.id = sp.song_id
+    JOIN playlist p ON sp.playlist_id = p.id
+    WHERE p.name = 'YouTubeLikedVideos'
+);
+
+
+-- Delete song_playlist entries for YouTube songs
+DELETE FROM song_playlist 
+WHERE song_id IN (
+    SELECT id FROM song WHERE platform = 'Youtube'
+);
+
+-- Delete YouTube songs
+DELETE FROM song WHERE platform = 'Youtube';

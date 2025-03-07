@@ -1,6 +1,6 @@
 import { ActionFunctionArgs, json, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSearchParams, Form, useNavigation } from "@remix-run/react";
-import { getUserSongsFromDB, populateSongsForUser, getFilters, refreshSpotifyLibrary, refreshYoutubeLibrary } from "~/services/db.server";
+import { getUserSongsFromDB, populateSongsForUser, getFilters, refreshSpotifyLibrary, refreshYoutubeLibrary, getLatestRefresh } from "~/services/db.server";
 import { getProviderSession } from "~/services/auth.server";
 import { Song } from "~/types/customs";
 import {
@@ -20,7 +20,7 @@ import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, Pagi
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
-import { Loader, CheckCircle, ChevronFirst, ChevronLast } from "lucide-react";
+import { Loader, CheckCircle, ChevronFirst, ChevronLast, Clock } from "lucide-react";
 import { jsonWithError, jsonWithSuccess } from "remix-toast";
 import { getTotalLikedSongsSpotify } from "~/services/selfApi.server";
 import { useState } from "react";
@@ -34,6 +34,8 @@ interface LoaderData {
   total: number;
   platforms: string[];
   playlists: string[];
+  lastRefreshSpotify: string | null;
+  lastRefreshYoutube: string | null;
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -44,6 +46,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // If not authenticated with either provider, redirect to account manager
   if (!spotifySession && !youtubeSession) {
     return redirect("/accountmanager");
+  }
+
+  // Get last refresh times
+  let lastRefreshSpotify = null;
+  let lastRefreshYoutube = null;
+  
+  if (spotifySession?.email) {
+    lastRefreshSpotify = await getLatestRefresh(spotifySession.email, 'spotify');
+  }
+  
+  if (youtubeSession?.email) {
+    lastRefreshYoutube = await getLatestRefresh(youtubeSession.email, 'youtube');
   }
 
   const url = new URL(request.url);
@@ -77,7 +91,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     totalPages: songsResult.totalPages,
     total: songsResult.total,
     platforms: filterOptions.platforms,
-    playlists: filterOptions.playlists
+    playlists: filterOptions.playlists,
+    lastRefreshSpotify,
+    lastRefreshYoutube
   };
 
   return json(response);
@@ -181,7 +197,7 @@ export async function action({
 }
 
 export default function Updates() {
-  const { songs, currentPage, totalPages, total, platforms, playlists } = useLoaderData<typeof loader>();
+  const { songs, currentPage, totalPages, total, platforms, playlists, lastRefreshSpotify, lastRefreshYoutube } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigation = useNavigation();
   const [downloadingSongs] = useState<Set<string>>(new Set());
@@ -233,27 +249,49 @@ export default function Updates() {
   };
 
   // Format playlist names for display
-  const formatPlaylist = (song) => {
+  const formatPlaylist = (song: Song) => {
     if (song.playlists && song.playlists.length > 0) {
       return song.playlists.map(p => p.name).join(', ');
     }
     
     // Fallback to old playlist field for backward compatibility
-    const playlistStr = song.playlist || '[]';
+    if (!song.playlist) return '';
     
     try {
-      return typeof song.playlist === 'string'
-        ? song.playlist
-        : Array.isArray(song.playlist)
-        ? song.playlist.join(', ')
-        : JSON.parse(playlistStr).join(', ');
+      if (typeof song.playlist === 'string') {
+        return song.playlist;
+      } else if (Array.isArray(song.playlist)) {
+        return song.playlist.join(', ');
+      } else {
+        const parsed = JSON.parse(typeof song.playlist === 'string' ? song.playlist : '[]');
+        return Array.isArray(parsed) ? parsed.join(', ') : '';
+      }
     } catch (e) {
-      return playlistStr;
+      return typeof song.playlist === 'string' ? song.playlist : '';
+    }
+  };
+
+  // Format date for display
+  const formatDate = (dateString: string | null): string => {
+    if (!dateString) return 'Never';
+    
+    try {
+      const date = new Date(dateString);
+      // Use a specific format instead of toLocaleString() to ensure consistency between server and client
+      const day = date.getDate().toString().padStart(2, '0');
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      const year = date.getFullYear();
+      const hours = date.getHours().toString().padStart(2, '0');
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      const seconds = date.getSeconds().toString().padStart(2, '0');
+      return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
+    } catch (e) {
+      return 'Invalid date';
     }
   };
 
   return (
-    <div className="space-y-4 ">
+    <div className="space-y-4">
       {/* Refresh Card */}
       <Card>
         <CardContent className="p-4">
@@ -267,42 +305,52 @@ export default function Updates() {
                 </a>
               </p>
             </div>
-            <div className="flex items-center gap-3">
-              <Form method="post">
-                <Button 
-                  type="submit" 
-                  name="action" 
-                  value="refresh_spotify" 
-                  variant="outline"
-                  disabled={isRefreshingSpotify || isRefreshingYoutube}
-                  className="flex items-center gap-2"
-                >
-                  {isRefreshingSpotify ? (
-                    <Loader className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <SpotifyLogo className="h-4 w-4" />
-                  )}
-                  Sync Spotify
-                </Button>
-              </Form>
-              
-              <Form method="post">
-                <Button 
-                  type="submit" 
-                  name="action" 
-                  value="refresh_youtube" 
-                  variant="outline"
-                  disabled={isRefreshingSpotify || isRefreshingYoutube}
-                  className="flex items-center gap-2"
-                >
-                  {isRefreshingYoutube ? (
-                    <Loader className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <YoutubeLogo className="h-4 w-4" />
-                  )}
-                  Sync YouTube Playlists
-                </Button>
-              </Form>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <Form method="post" className="flex flex-col items-end">
+                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    Last sync: {formatDate(lastRefreshSpotify)}
+                  </div>
+                  <Button 
+                    type="submit" 
+                    name="action" 
+                    value="refresh_spotify" 
+                    variant="outline"
+                    disabled={isRefreshingSpotify || isRefreshingYoutube}
+                    className="flex items-center gap-2"
+                  >
+                    {isRefreshingSpotify ? (
+                      <Loader className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <SpotifyLogo className="h-4 w-4" />
+                    )}
+                    Sync Spotify
+                  </Button>
+                </Form>
+                
+                <Form method="post" className="flex flex-col items-end">
+                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    Last sync: {formatDate(lastRefreshYoutube)}
+                  </div>
+                  <Button 
+                    type="submit" 
+                    name="action" 
+                    value="refresh_youtube" 
+                    variant="outline"
+                    disabled={isRefreshingSpotify || isRefreshingYoutube}
+                    className="flex items-center gap-2"
+                  >
+                    {isRefreshingYoutube ? (
+                      <Loader className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <YoutubeLogo className="h-4 w-4" />
+                    )}
+                    Sync YouTube Playlists
+                  </Button>
+                </Form>
+              </div>
             </div>
           </div>
         </CardContent>
@@ -452,11 +500,15 @@ export default function Updates() {
                   <TableCell>
                     {formatPlaylist(song)}
                   </TableCell>
-                  <TableCell>{new Date(song.platform_added_at).toLocaleDateString('en-GB', {
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit'
-                  })}</TableCell>
+                  <TableCell>
+                    {(() => {
+                      const date = new Date(song.platform_added_at);
+                      const day = date.getDate().toString().padStart(2, '0');
+                      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                      const year = date.getFullYear();
+                      return `${day}.${month}.${year}`;
+                    })()}
+                  </TableCell>
                   <TableCell>
                     <div className="relative inline-block">
                       <DownloadButton songId={song.id.toString()} userId="arnaud" />
