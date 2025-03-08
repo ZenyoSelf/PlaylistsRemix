@@ -141,3 +141,6 @@ DONE : Add a tool to set which songs were downloaded (as users could have downlo
 
 Add more options than "only my playlist", as for example "Radar des sorties" or "Découverte de la semaine" is taken into my playlist account.
 
+Add a better tracking on the zipping (logs of progress, and enhance it to be faster.)
+
+Also set the songs from batch download to download when download is done (click on button and served folder)

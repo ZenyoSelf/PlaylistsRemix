@@ -26,8 +26,9 @@ import { getTotalLikedSongsSpotify } from "~/services/selfApi.server";
 import { useState } from "react";
 import { DownloadButton } from "~/components/DownloadButton";
 import { redirect } from "@remix-run/node";
-
+import { sessionStorage } from "~/services/session.server";
 interface LoaderData {
+  userId: string;
   songs: Song[];
   currentPage: number;
   totalPages: number;
@@ -42,7 +43,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Check if the user is authenticated with either provider
   const spotifySession = await getProviderSession(request, "spotify");
   const youtubeSession = await getProviderSession(request, "youtube");
-  
+  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+  const userId = session.get("userId");
   // If not authenticated with either provider, redirect to account manager
   if (!spotifySession && !youtubeSession) {
     return redirect("/accountmanager");
@@ -86,6 +88,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const filterOptions = await getFilters(request);
 
   const response: LoaderData = {
+    userId: userId,
     songs: songsResult.songs,
     currentPage: songsResult.currentPage,
     totalPages: songsResult.totalPages,
@@ -197,7 +200,7 @@ export async function action({
 }
 
 export default function Updates() {
-  const { songs, currentPage, totalPages, total, platforms, playlists, lastRefreshSpotify, lastRefreshYoutube } = useLoaderData<typeof loader>();
+  const { userId,songs, currentPage, totalPages, total, platforms, playlists, lastRefreshSpotify, lastRefreshYoutube } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigation = useNavigation();
   const [downloadingSongs] = useState<Set<string>>(new Set());
@@ -511,7 +514,7 @@ export default function Updates() {
                   </TableCell>
                   <TableCell>
                     <div className="relative inline-block">
-                      <DownloadButton songId={song.id.toString()} userId="arnaud" />
+                      <DownloadButton songId={song.id.toString()} userId={userId} />
                       {song.downloaded ?  (
                         <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground rounded-full w-4 h-4 text-xs flex items-center justify-center">
                           <CheckCircle className="h-3 w-3" />

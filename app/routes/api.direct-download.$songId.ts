@@ -25,6 +25,9 @@ export const loader: LoaderFunction = async ({ params, request }) => {
     if (!userId) {
       return json({ error: "Missing user ID" }, { status: 400 });
     }
+    
+    // Ensure userId is a string
+    const userIdStr = String(userId);
 
     // Get the first playlist name or use 'default' if none exists
     const playlistName = song.playlists && song.playlists.length > 0 
@@ -37,7 +40,7 @@ export const loader: LoaderFunction = async ({ params, request }) => {
     const dirPath = path.join(
       process.cwd(),
       "tmp",
-      userId,
+      userIdStr,
       playlistName
     );
 

@@ -3,6 +3,8 @@ import type { ActionFunction } from '@remix-run/node';
 import { getSongById } from '~/services/db.server';
 import { downloadQueue } from '~/services/queue.server';
 import { emitProgress } from '~/workers/downloadWorker.server';
+import path from 'path';
+import fs from 'fs/promises';
 
 export const action: ActionFunction = async ({ request }) => {
   if (request.method !== 'POST') {
@@ -11,6 +13,9 @@ export const action: ActionFunction = async ({ request }) => {
 
   try {
     const { songId, userId } = await request.json();
+    
+    // Ensure userId is a string
+    const userIdStr = String(userId);
     
     // Get song details first
     const song = await getSongById(songId);
@@ -21,10 +26,28 @@ export const action: ActionFunction = async ({ request }) => {
       );
     }
 
+    // Determine the playlist name
+    const playlistName = song.playlists && song.playlists.length > 0 
+      ? song.playlists[0].name 
+      : (Array.isArray(song.playlist) && song.playlist.length > 0 
+        ? song.playlist[0] 
+        : 'default');
+
+    // Create the output directory structure before queueing the job
+    const outputDir = path.join(process.cwd(), "tmp", userIdStr, playlistName);
+    try {
+      await fs.mkdir(outputDir, { recursive: true });
+      console.log(`Created output directory: ${outputDir}`);
+    } catch (error) {
+      console.error(`Error creating output directory: ${outputDir}`, error);
+      // Continue with the job even if directory creation fails
+      // The download worker will try to create it again
+    }
+
     // Add job to queue
     const job = await downloadQueue.add({
       songId: songId,
-      userId: userId,
+      userId: userIdStr,
     }, {
       attempts: 3,
       backoff: {
@@ -34,7 +57,7 @@ export const action: ActionFunction = async ({ request }) => {
     });
 
     // Emit queued event immediately
-    emitProgress(userId, {
+    emitProgress(userIdStr, {
       type: 'queued',
       progress: 0,
       jobId: job.id,
