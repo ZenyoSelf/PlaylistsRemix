@@ -21,7 +21,7 @@ export function normalizeString(str: string): string {
  * Finds a file in a directory that best matches a song title and optionally artist name.
  * Uses multiple matching strategies with decreasing strictness.
  */
-export async function findMatchingFile(dirPath: string, songTitle: string, artistName?: string): Promise<string | null> {
+export async function findMatchingFile(dirPath: string, songTitle: string | undefined, artistName?: string): Promise<string | null> {
   try {
     // Add a small delay to throttle file system operations
     await delay(50);
@@ -40,7 +40,7 @@ export async function findMatchingFile(dirPath: string, songTitle: string, artis
     }
     
     // Normalize the song title for comparison
-    const normalizedTitle = normalizeString(songTitle);
+    const normalizedTitle = normalizeString(songTitle || '');
     const normalizedArtist = artistName ? normalizeString(artistName) : null;
     
     if (!normalizedTitle) {
@@ -50,7 +50,7 @@ export async function findMatchingFile(dirPath: string, songTitle: string, artis
     // First try: exact match with title
     const exactMatch = files.find(file => {
       const fileName = path.parse(file).name;
-      return fileName.includes(songTitle);
+      return fileName.includes(songTitle || '');
     });
     
     if (exactMatch) return exactMatch;

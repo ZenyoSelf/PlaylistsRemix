@@ -130,10 +130,14 @@ TODO THINK : Spotify liked songs limit
 
 DONE : Overhaul the populatesongsforuser method : accurate email, fix the youtube forbidden (scope probably), only get music.youtube.com playlists, etc...
 REMOVED : Add true auth to the app : user need to create account or get created to access it, so that the user can have different emails for spotify and youtube, while having one email in the DB.
-Add a column in the db and on relevant screens, that get the date of the song added to the playlist (not added to the app).
+DONE : Add a column in the db and on relevant screens, that get the date of the song added to the playlist (not added to the app).
 
-Add one click download for all not downloaded file (new-additions)
+DONE : Add one click download for all not downloaded file (new-additions)
 Add accurate metadata to file (right artist, right album name, ...)
 
+
 REmoved the is-local api, only taken by the normal retrieval system.
-Add a tool to set which songs were downloaded (as users could have downloaded songs elsewhere, we need to add the option to set which songs have been already downloaded. )
+DONE : Add a tool to set which songs were downloaded (as users could have downloaded songs elsewhere, we need to add the option to set which songs have been already downloaded. )
+
+Add more options than "only my playlist", as for example "Radar des sorties" or "Découverte de la semaine" is taken into my playlist account.
+

@@ -1,6 +1,6 @@
 import { ActionFunctionArgs, json, LoaderFunctionArgs, redirect } from "@remix-run/node";
 import { useLoaderData, useSearchParams, Form, useNavigation } from "@remix-run/react";
-import { getUserSongsFromDB, getFilters, refreshSpotifyLibrary, refreshYoutubeLibrary, getLatestRefresh, markSongsAsDownloadedBeforeDate } from "~/services/db.server";
+import { getUserSongsFromDB, getFilters, refreshSpotifyLibrary, refreshYoutubeLibrary, getLatestRefresh, markSongsAsDownloadedBeforeDate, getAllSongIdsWithFilter } from "~/services/db.server";
 import { getProviderSession } from "~/services/auth.server";
 import { Song } from "~/types/customs";
 import {
@@ -175,12 +175,9 @@ export async function action({
       const playlist = formData.get("playlist") as string || '';
       const search = formData.get("search") as string || '';
       const onlyMyPlaylists = formData.get("onlyMyPlaylists") === "true";
-      const total = formData.get("total") as string || 20;
+
       // Create filter parameters object
-      //Should be getting from a new method, but hacky way to get it for now
       const filterParams = {
-        page: 1,
-        itemsPerPage: Number(total), // Get a large number to include all filtered songs
         platform: platform !== 'all' ? platform : '',
         playlist: playlist !== 'all' ? playlist : '',
         search,
@@ -188,14 +185,12 @@ export async function action({
         onlyMyPlaylists,
       };
 
-      // Get the song IDs that match the filter criteria
-      const { songs } = await getUserSongsFromDB(request, filterParams);
-      const songIds = songs.map(song => song.id.toString());
+      // Get all song IDs that match the filter criteria without pagination
+      const songIds = await getAllSongIdsWithFilter(request, filterParams);
 
       if (songIds.length === 0) {
         return jsonWithError({}, "No songs found matching the filter criteria");
       }
-
 
       // Get the request URL to build an absolute URL
       const url = new URL(request.url);
@@ -577,15 +572,15 @@ export default function NewAdditions() {
                     </Dialog>
                     <Form method="post" className="flex-shrink-0">
                       <input type="hidden" name="action" value="download-all" />
-                      <input type="hidden" name="total" value={total} />
                       <input type="hidden" name="platform" value={searchParams.get("platform") || "all"} />
                       <input type="hidden" name="playlist" value={searchParams.get("playlist") || "all"} />
                       <input type="hidden" name="search" value={searchParams.get("search") || ""} />
+                      <input type="hidden" name="onlyMyPlaylists" value={searchParams.get("onlyMyPlaylists") || "false"} />
                       <Button
                         type="submit"
                         variant="default"
-                        disabled={isSubmittingAction("download-all") || songs.length === 0}
-                        title={songs.length === 0 ? "No songs to download" : "Download all filtered songs"}
+                        disabled={isSubmittingAction("download-all") || total === 0}
+                        title={total === 0 ? "No songs to download" : `Download all ${total} filtered songs`}
                         className="whitespace-nowrap"
                       >
                         {isSubmittingAction("download-all") ? (
@@ -593,7 +588,7 @@ export default function NewAdditions() {
                         ) : (
                           <Package className="mr-2 h-4 w-4" />
                         )}
-                        Add All to Download
+                        Add All ({total}) to Download
                       </Button>
                     </Form>
                   </div>

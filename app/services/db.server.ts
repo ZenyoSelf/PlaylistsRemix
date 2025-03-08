@@ -1,8 +1,8 @@
-import sqlite3 from 'sqlite3';
-import { open, Database } from "sqlite";
+import { Database, open } from "sqlite";
+import sqlite3 from "sqlite3";
 import { getProviderAccessToken, isAuthenticatedWithProvider, getProviderSession } from "./auth.server";
 import { getLikedSongsSpotify, getAllUserPlaylistsSpotify, getPlaylistTracksSpotify } from "./selfApi.server";
-import { getAllUserPlaylistsYouTube, getPlaylistVideosYouTube, convertYouTubeItemsToSongs, getLikedVideosYouTube } from "./youtubeApi.server";
+import { getAllUserPlaylistsYouTube, getPlaylistVideosYouTube, convertYouTubeItemsToSongs } from "./youtubeApi.server";
 
 import path from "path";
 import { Song, Playlist, SongPlaylist } from '~/types/customs';
@@ -1865,4 +1865,138 @@ export async function getUserOwnedPlaylists(userId: number, platform: string) {
   } finally {
     await db.close();
   }
+}
+
+/**
+ * Get all song IDs that match the filter criteria without pagination
+ * Used specifically for bulk download functionality
+ */
+export async function getAllSongIdsWithFilter(
+  request: Request,
+  options: {
+    search?: string;
+    platform?: string;
+    playlist?: string;
+    songStatus?: string;
+    onlyMyPlaylists?: boolean;
+  } = {}
+) {
+  const db = await getDb();
+
+  // Try to get session from both providers
+  const spotifySession = await getProviderSession(request, "spotify");
+  const youtubeSession = await getProviderSession(request, "youtube");
+
+  // Get emails from both sessions if available
+  const spotifyEmail = spotifySession?.email || '';
+  const youtubeEmail = youtubeSession?.email || '';
+
+  // Check if at least one provider is authenticated
+  if (!spotifyEmail && !youtubeEmail) {
+    throw new Error("User not authenticated with any provider");
+  }
+
+  const {
+    search = '',
+    platform = '',
+    playlist = '',
+    songStatus = '',
+    onlyMyPlaylists = false
+  } = options;
+
+  // Get the user ID from either spotify or youtube email
+  let userId;
+  try {
+    const userQuery = await db.get(
+      "SELECT id FROM user WHERE user_spotify = ? OR user_youtube = ?",
+      [spotifyEmail, youtubeEmail]
+    );
+    userId = userQuery?.id;
+    if (!userId) {
+      throw new Error("User not found in database");
+    }
+  } catch (error) {
+    console.error("Error getting user ID:", error);
+    throw new Error("Failed to get user ID");
+  }
+
+  // Build the base query - only select IDs for efficiency
+  let baseQuery = 'FROM song s';
+  const selectQuery = 'SELECT DISTINCT s.id';
+
+  // Join with song_playlist and playlist tables if playlist filter is applied or if filtering by user's playlists
+  if (playlist || onlyMyPlaylists) {
+    baseQuery += ' JOIN song_playlist sp ON s.id = sp.song_id JOIN playlist p ON sp.playlist_id = p.id';
+  }
+
+  // Build the WHERE clause dynamically
+  const whereConditions = [];
+  const params: Array<string | number> = [];
+
+  whereConditions.push('s.user_id = ?');
+  params.push(userId);
+
+  if (search) {
+    whereConditions.push('(s.title LIKE ? OR s.artist_name LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`);
+  }
+
+  if (platform) {
+    whereConditions.push('s.platform = ?');
+    params.push(platform);
+  }
+
+  if (playlist) {
+    // Filter by playlist name
+    whereConditions.push('p.name = ?');
+    params.push(playlist);
+  }
+
+  if (onlyMyPlaylists) {
+    // Filter by owner_id based on active sessions
+    if (spotifySession?.email || youtubeSession?.email) {
+      const ownerIds = [];
+      const ownerParams = [];
+
+      if (spotifySession?.email) {
+        ownerIds.push('p.owner_id = ?');
+        ownerParams.push(spotifySession.email);
+        const emailParts = spotifySession?.email.split('@');
+        const usernameOnly = emailParts[0];
+        ownerIds.push('p.owner_id = ?');
+        ownerParams.push(usernameOnly);
+      }
+
+      if (youtubeSession?.email) {
+        ownerIds.push('p.owner_id = ?');
+        ownerParams.push(youtubeSession.email);
+        const emailParts = youtubeSession?.email.split('@');
+        const usernameOnly = emailParts[0];
+        ownerIds.push('p.owner_id = ?');
+        ownerParams.push(usernameOnly);
+      }
+
+      whereConditions.push(`(${ownerIds.join(' OR ')})`);
+      params.push(...ownerParams);
+    }
+  }
+
+  if (songStatus) {
+    if (songStatus === 'notDownloaded') {
+      whereConditions.push('s.downloaded = 0');
+    } else if (songStatus === 'localFiles') {
+      whereConditions.push('s.local = 1');
+    }
+  }
+
+  const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+  // Get all song IDs matching the filter criteria
+  const songIds = await db.all(
+    `${selectQuery} ${baseQuery} ${whereClause}`,
+    params
+  );
+
+  // Return just the IDs as an array of strings
+  return songIds.map((row: { id: number | string }) => row.id.toString());
 }

@@ -65,3 +65,6 @@ WHERE song_id IN (
 
 -- Delete YouTube songs
 DELETE FROM song WHERE platform = 'Youtube';
+
+
+select * from song where id IN (3962,3930,3765,2845,1294,141,50,49)

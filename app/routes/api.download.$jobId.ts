@@ -1,11 +1,11 @@
 import { LoaderFunction, json } from "@remix-run/node";
 import path from "path";
-import fs from "fs/promises";
+import { createReadStream, statSync } from "fs";
 import { downloadQueue } from "~/services/queue.server";
 import { getSongById, updateSongDownloadStatus } from "~/services/db.server";
 import { findMatchingFile } from "~/utils/file-matching.server";
 
-export const loader: LoaderFunction = async ({ params }) => {
+export const loader: LoaderFunction = async ({ params, request }) => {
   const jobId = params.jobId;
   
   if (!jobId) {
@@ -48,16 +48,20 @@ export const loader: LoaderFunction = async ({ params }) => {
       ? song.artist_name.join(' ') 
       : typeof song.artist_name === 'string' 
         ? song.artist_name 
-        : undefined;
+        : '';
     
-    const downloadFile = await findMatchingFile(dirPath, song.title || '', artistName);
+    const songTitle = song.title || '';
+    const downloadFile = await findMatchingFile(dirPath, songTitle, artistName);
 
     if (!downloadFile) {
       return new Response("File not found", { status: 404 });
     }
 
     const absolutePath = path.join(dirPath, downloadFile);
-    const fileBuffer = await fs.readFile(absolutePath);
+    
+    // Get file stats to determine size
+    const stats = statSync(absolutePath);
+    const fileSize = stats.size;
     
     // Create a clean filename for the download that includes artist name
     const filenameBase = path.parse(downloadFile).name;
@@ -81,19 +85,49 @@ export const loader: LoaderFunction = async ({ params }) => {
     }
     
     // Create filename with format: "Artist1, Artist2, Artist3 - title.flac"
-    const songTitle = (song.title || filenameBase).trim();
+    const songTitleFormatted = (song.title || filenameBase).trim();
     const cleanFilename = artistDisplay 
-      ? `${artistDisplay} - ${songTitle}${filenameExt}`
-      : `${songTitle}${filenameExt}`;
+      ? `${artistDisplay} - ${songTitleFormatted}${filenameExt}`
+      : `${songTitleFormatted}${filenameExt}`;
     
     const encodedFilename = encodeURIComponent(cleanFilename)
       .replace(/['()]/g, escape)
       .replace(/\*/g, '%2A');
     
+    // Check for range headers (for resumable downloads)
+    const rangeHeader = request.headers.get("Range");
+    let start = 0;
+    let end = fileSize - 1;
+    let statusCode = 200;
+    
+    // Handle range requests (resumable downloads)
+    if (rangeHeader) {
+      const matches = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+      if (matches) {
+        start = parseInt(matches[1], 10);
+        if (matches[2]?.length > 0) {
+          end = parseInt(matches[2], 10);
+        }
+        statusCode = 206; // Partial content
+      }
+    }
+    
+    const contentLength = end - start + 1;
+    
     const headers = new Headers();
     headers.set("Content-Type", "audio/flac");
     headers.set("Content-Disposition", `attachment; filename="${encodedFilename}"; filename*=UTF-8''${encodedFilename}`);
-    headers.set("Content-Length", fileBuffer.length.toString());
+    headers.set("Accept-Ranges", "bytes");
+    
+    if (statusCode === 206) {
+      // For partial content
+      headers.set("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+      headers.set("Content-Length", contentLength.toString());
+    } else {
+      // For full content
+      headers.set("Content-Length", fileSize.toString());
+    }
+    
     headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     headers.set("Pragma", "no-cache");
     headers.set("Expires", "0");
@@ -101,8 +135,34 @@ export const loader: LoaderFunction = async ({ params }) => {
     // set song as downloaded
     await updateSongDownloadStatus(songId, true);
 
-    return new Response(fileBuffer, {
-      status: 200,
+    // Create a readable stream for the file
+    const fileStream = createReadStream(absolutePath, { start, end });
+    
+    // Create a stream response
+    const stream = new ReadableStream({
+      start(controller) {
+        // Handle stream events
+        fileStream.on('data', (chunk) => {
+          controller.enqueue(chunk);
+        });
+        
+        fileStream.on('end', () => {
+          controller.close();
+        });
+        
+        fileStream.on('error', (error) => {
+          console.error(`Error streaming file: ${error}`);
+          controller.error(error);
+        });
+      },
+      
+      cancel() {
+        fileStream.destroy();
+      }
+    });
+
+    return new Response(stream, {
+      status: statusCode,
       headers,
     });
   } catch (error) {
@@ -112,4 +172,4 @@ export const loader: LoaderFunction = async ({ params }) => {
       { status: 500 }
     );
   }
-}; 
+};
