@@ -1,26 +1,18 @@
 import { ActionFunction, json } from "@remix-run/node";
-import { getDb,  getUserId } from "~/services/db.server";
-import { getProviderSession } from "~/services/auth.server";
+import { getDb, getUserId } from "~/services/db.server";
 
 import { downloadQueue } from "~/services/queue.server";
 import { emitProgress } from "~/workers/downloadWorker.server";
 
 export const action: ActionFunction = async ({ request }) => {
   try {
-
     const db = await getDb();
-    // Get user email from session
-    const spotifySession = await getProviderSession(request, "spotify");
-    const youtubeSession = await getProviderSession(request, "youtube");
 
-    // Get emails from both sessions if available
-    const spotifyEmail = spotifySession?.email || '';
-    const youtubeEmail = youtubeSession?.email || '';
-
+    const { songIds, spotifyEmail, youtubeEmail } = await request.json();
     let userId;
     // Check if at least one provider is authenticated
-    if (!spotifyEmail && !youtubeEmail) {
-      return json({ error: "User not authenticated" }, { status: 401 });
+    if (!spotifyEmail || !youtubeEmail) {
+      return json({ error: "No spotifyEmail or youtubeEmail from the request" }, { status: 401 });
     } else {
       if (spotifyEmail) {
         userId = await getUserId(db, spotifyEmail, "spotify");
@@ -29,14 +21,12 @@ export const action: ActionFunction = async ({ request }) => {
       }
     }
 
-
     // Parse request body
-    const { songIds } = await request.json();
 
 
-    if (!songIds && !Array.isArray(songIds) && songIds.length <= 0) {
+    if (!songIds || !Array.isArray(songIds) || songIds.length <= 0) {
       return json({ error: "No songs specified" }, { status: 400 });
-    } 
+    }
 
     // Check if there are any songs to download
     if (songIds.length === 0) {

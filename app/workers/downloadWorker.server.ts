@@ -3,6 +3,18 @@ import path from 'path';
 import { downloadSpotifySong } from '~/services/selfApi.server';
 import { getSongById, getSongsByIds, updateSongDownloadStatus, updateSongLocalStatus } from '~/services/db.server';
 import { createZipFromSongs } from '~/services/zipService.server';
+import fs from 'fs/promises';
+import { Job } from 'bull';
+
+// Define the job data interface
+interface DownloadJobData {
+  songId?: string;
+  userId: string;
+  type?: 'single' | 'bulk';
+  bulkSongIds?: string[];
+  songName?: string;
+  zipPath?: string;
+}
 
 // Map to store event sources for each user
 const eventSources = new Map<string, Set<(data: ProgressData) => void>>();
@@ -14,6 +26,7 @@ interface ProgressData {
   songName: string;
   filePath?: string;
   error?: string;
+  isBulk?: boolean;
 }
 
 // Store active download streams
@@ -33,6 +46,17 @@ export function emitProgress(userId: string, data: ProgressData) {
   if (userEventSources) {
     for (const callback of userEventSources) {
       callback(data);
+    }
+  }
+  
+  // Also send to any active download streams
+  const controller = downloadStreams.get(userId);
+  if (controller) {
+    try {
+      const eventData = `event: message\ndata: ${JSON.stringify(data)}\n\n`;
+      controller.enqueue(new TextEncoder().encode(eventData));
+    } catch (error) {
+      console.error(`Error sending progress to stream for user ${userId}:`, error);
     }
   }
 }
@@ -67,14 +91,13 @@ downloadQueue.process(async (job) => {
 });
 
 // Process a single song download
-async function processSingleDownload(job) {
-  const { songId, userId } = job.data;
+async function processSingleDownload(job: Job<DownloadJobData>) {
+  const { songId = '', userId } = job.data;
   const song = await getSongById(songId);
   try {
     // Get song details from your database
-
     if (!song) {
-      throw new Error('Song not found');
+      throw new Error(`Song not found: ${songId}`);
     }
 
     // Start download with job info
@@ -94,16 +117,19 @@ async function processSingleDownload(job) {
       artists = artistString.split(',').map((a: string) => a.trim()).filter(Boolean);
     }
 
-    // Get the first playlist name or use 'default' if none exists
-    const playlistName = song.playlists && song.playlists.length > 0
-      ? song.playlists[0].name
-      : (Array.isArray(song.playlist) && song.playlist.length > 0
-        ? song.playlist[0]
+    // Get playlist name
+    const playlistName = song.playlists && song.playlists.length > 0 
+      ? song.playlists[0].name 
+      : (Array.isArray(song.playlist) && song.playlist.length > 0 
+        ? song.playlist[0] 
         : 'default');
 
     // Download the song
-    const result = await downloadSpotifySong(song.title!, artists, playlistName, userId);
-    const { path: filePath } = JSON.parse(result);
+    await downloadSpotifySong(song.title || 'Unknown', artists, playlistName, userId);
+
+    // Update song status in database
+    await updateSongDownloadStatus(songId, true);
+    await updateSongLocalStatus(songId, true);
 
     // Update progress to 100% with job info
     emitProgress(userId, {
@@ -113,26 +139,21 @@ async function processSingleDownload(job) {
       songName: song.title || 'Unknown Song'
     });
 
-    // Update song status in database
-    await updateSongDownloadStatus(songId, true);
-    await updateSongLocalStatus(songId, true);
-
     // Emit completion with job info
     emitProgress(userId, {
       type: 'complete',
       jobId: job.id,
       songName: song.title || 'Unknown Song',
-      filePath: path.basename(filePath)
+      filePath: songId
     });
 
     return {
       status: 'completed',
-      filePath: path.basename(filePath),
-      userId,
-      songName: song.title
+      songId,
+      userId
     };
   } catch (error) {
-    console.error(`Error downloading song ${songId}:`, error);
+    console.error(`Error processing download for song ${songId}:`, error);
 
     // Emit error with job info
     emitProgress(userId, {
@@ -147,8 +168,8 @@ async function processSingleDownload(job) {
 }
 
 // Process a bulk download job
-async function processBulkDownload(job) {
-  const { userId, bulkSongIds } = job.data;
+async function processBulkDownload(job: Job<DownloadJobData>) {
+  const { userId, bulkSongIds = [] } = job.data;
 
   try {
     // Start download with job info
@@ -156,26 +177,46 @@ async function processBulkDownload(job) {
       type: 'progress',
       progress: 0,
       jobId: job.id,
-      songName: `Bulk download (${bulkSongIds.length} songs)`
+      songName: `Bulk download (${bulkSongIds.length} songs)`,
+      isBulk: true
     });
+
+    // Set job progress to 0%
+    await job.progress(0);
 
     // Filter songs that are already downloaded
     const songs = await getSongsByIds(bulkSongIds);
     const totalSongs = songs.length;
 
-    //File name later on
-    const playlistName = "bulkDownloadSongs"+new Date().getTime();
+    // Use a consistent "bulk" folder for all bulk downloads
+    const bulkFolderName = "bulk";
+    
+    // Create the bulk folder if it doesn't exist
+    const bulkDir = path.join(process.cwd(), "tmp", userId, bulkFolderName);
+    try {
+      await fs.mkdir(bulkDir, { recursive: true });
+    } catch (error) {
+      console.error(`Error creating bulk directory: ${bulkDir}`, error);
+      throw error;
+    }
+    
     // Process songs that need to be downloaded
     for (let treatedSongs = 0; treatedSongs < songs.length; treatedSongs++) {
       const song = songs[treatedSongs];
       try {
-        // Update progress
+        // Calculate progress percentage
         const progress = Math.round((treatedSongs / totalSongs) * 100);
+        
+        // Update job progress in the queue
+        await job.progress(progress);
+        
+        // Emit progress event to clients
         emitProgress(userId, {
           type: 'progress',
           progress,
           jobId: job.id,
-          songName: `Downloading ${treatedSongs + 1}/${totalSongs}: ${song.title}`
+          songName: `Downloading ${treatedSongs + 1}/${totalSongs}: ${song.title || 'Unknown'}`,
+          isBulk: true
         });
 
         // Ensure artist_name is an array
@@ -187,8 +228,8 @@ async function processBulkDownload(job) {
           artists = artistString.split(',').map((a: string) => a.trim()).filter(Boolean);
         }
 
-        // Download the song
-        await downloadSpotifySong(song.title!, artists, playlistName, userId);
+        // Download the song to the bulk folder
+        await downloadSpotifySong(song.title || 'Unknown', artists, bulkFolderName, userId);
 
         // Update song status in database
         await updateSongDownloadStatus(song.id.toString(), true);
@@ -204,17 +245,23 @@ async function processBulkDownload(job) {
       type: 'progress',
       progress: 90,
       jobId: job.id,
-      songName: `Creating zip file with ${songs.length} songs`
+      songName: `Creating zip file with ${songs.length} songs`,
+      isBulk: true
     });
+    
+    // Update job progress to 90%
+    await job.progress(90);
 
-    const zipPath = await createZipFromSongs(songs, userId, playlistName);
+    // Use the job ID as the zip file name
+    const zipPath = await createZipFromSongs(songs, userId, job.id.toString());
 
     // Update progress to 100% with job info
     emitProgress(userId, {
       type: 'progress',
       progress: 100,
       jobId: job.id,
-      songName: `Bulk download (${songs.length} songs)`
+      songName: `Bulk download (${songs.length} songs) ready`,
+      isBulk: true
     });
 
     // Emit completion with job info
@@ -222,7 +269,17 @@ async function processBulkDownload(job) {
       type: 'complete',
       jobId: job.id,
       songName: `Bulk download (${songs.length} songs)`,
-      filePath: path.basename(zipPath)
+      filePath: path.basename(zipPath),
+      isBulk: true
+    });
+
+    // Set job progress to 100% to mark it as completed
+    await job.progress(100);
+    
+    // Update job data to include the zip path
+    await job.update({
+      ...job.data,
+      zipPath: path.basename(zipPath)
     });
 
     return {
@@ -239,7 +296,8 @@ async function processBulkDownload(job) {
       type: 'error',
       jobId: job.id,
       songName: `Bulk download (${bulkSongIds.length} songs)`,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      isBulk: true
     });
 
     throw error;

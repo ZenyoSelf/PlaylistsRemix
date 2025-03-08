@@ -36,17 +36,29 @@ export async function createZipFromSongs(
   const addedFiles: string[] = [];
   const failedFiles: string[] = [];
   
+  // For bulk downloads, look in the bulk folder
+  const bulkDir = path.join(process.cwd(), 'tmp', userId, 'bulk');
+  const bulkDirExists = await fs.access(bulkDir).then(() => true).catch(() => false);
+  
   // Add each song to the archive
   for (const song of songs) {
     try {
       // Get the directory path for the song
-      const playlistName = song.playlists && song.playlists.length > 0 
-        ? song.playlists[0].name 
-        : (Array.isArray(song.playlist) && song.playlist.length > 0 
-          ? song.playlist[0] 
-          : 'default');
+      let dirPath;
       
-      const dirPath = path.join(process.cwd(), 'tmp', userId, playlistName);
+      // If this is a bulk download (zipName is a job ID starting with 'bulk-'), use the bulk folder
+      if (zipName.startsWith('bulk-') && bulkDirExists) {
+        dirPath = bulkDir;
+      } else {
+        // For regular downloads, use the playlist folder
+        const playlistName = song.playlists && song.playlists.length > 0 
+          ? song.playlists[0].name 
+          : (Array.isArray(song.playlist) && song.playlist.length > 0 
+            ? song.playlist[0] 
+            : 'default');
+        
+        dirPath = path.join(process.cwd(), 'tmp', userId, playlistName);
+      }
       
       // Find the matching file
       const artistName = Array.isArray(song.artist_name) 
@@ -65,15 +77,21 @@ export async function createZipFromSongs(
         if (Array.isArray(song.artist_name)) {
           // Clean up each artist name and join with commas
           artistDisplay = song.artist_name
-            .map(artist => String(artist).replace(/[[\]_]/g, '').trim())
+            .map(artist => String(artist)
+              .replace(/[[\]_]/g, '')  // Remove brackets and underscores
+              .replace(/"/g, '')       // Remove double quotes
+              .replace(/'/g, '')       // Remove single quotes
+              .trim())
             .filter(Boolean)
             .join(', ');
         } else if (typeof song.artist_name === 'string') {
           // Clean up string representation if it looks like an array
           artistDisplay = String(song.artist_name)
-            .replace(/[[\]_]/g, '')  // Remove brackets and underscores
-            .replace(/,/g, ', ')     // Ensure spaces after commas
-            .replace(/\s+/g, ' ')    // Normalize whitespace
+            .replace(/[[\]_]/g, '')    // Remove brackets and underscores
+            .replace(/"/g, '')         // Remove double quotes
+            .replace(/'/g, '')         // Remove single quotes
+            .replace(/,/g, ', ')       // Ensure spaces after commas
+            .replace(/\s+/g, ' ')      // Normalize whitespace
             .trim();
         }
         
@@ -96,24 +114,7 @@ export async function createZipFromSongs(
     }
   }
   
-  // Add a readme file with information about the zip
-  const readmeContent = `
-# New Additions Download
 
-This zip file contains ${addedFiles.length} songs that were added to your library.
-Created on: ${new Date().toLocaleString()}
-
-## Successfully Added Files:
-${addedFiles.map(file => `- ${file}`).join('\n')}
-
-${failedFiles.length > 0 ? `
-## Failed to Add:
-${failedFiles.map(file => `- ${file}`).join('\n')}
-` : ''}
-`;
-  
-  archive.append(readmeContent, { name: 'README.txt' });
-  
   // Finalize the archive
   await archive.finalize();
   

@@ -15,42 +15,57 @@ import { getToast } from "remix-toast";
 import { useEffect } from "react";
 import { useToast } from "./hooks/use-toast";
 import { sessionStorage } from "~/services/session.server";
+import { getActiveSessions } from "~/services/auth.server";
 
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: styles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { toast, headers } = await getToast(request);
-  
+
   // Get the current URL
   const url = new URL(request.url);
   const path = url.pathname;
-  
+
   // Public routes that don't require authentication
   const publicRoutes = ['/login', '/auth/spotify', '/auth/google', '/auth/spotify/callback', '/auth/google/callback'];
-  
+
   // Check if the current route is a public route
   const isPublicRoute = publicRoutes.some(route => path.startsWith(route));
-  
+
+  let userEmail = null;
+  let userId = null;
   if (!isPublicRoute) {
     // Check if user is logged in
     const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-    const userEmail = session.get("userEmail");
-    
+    userEmail = session.get("userEmail");
+    userId = session.get("userId");
+    if (!userEmail) {
+      // Try to get email from provider sessions
+      const sessions = await getActiveSessions(request);
+      if (sessions.spotify) {
+        userEmail = sessions.spotify.email;
+
+      } else if (sessions.youtube) {
+        userEmail = sessions.youtube.email;
+
+      }
+    }
+
     if (!userEmail) {
       // User is not logged in, redirect to login page
       return redirect("/login");
     }
   }
-  
-  return json({ toast, path }, { headers });
+
+  return json({ toast, path, userEmail, userId }, { headers });
 };
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const loaderData = useLoaderData<typeof loader>();
   const { toast } = useToast();
   const location = useLocation();
-  
+
   // Check if we're on the login page
   const isLoginPage = location.pathname === "/login";
 
@@ -81,7 +96,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body className="relative min-h-screen">
         <div className="mx-auto lg:max-w-7xl">
-          {!isLoginPage && <Header />}
+          {!isLoginPage && <Header userId={loaderData.userId} />}
           {children}
           <ScrollRestoration />
           <Scripts />

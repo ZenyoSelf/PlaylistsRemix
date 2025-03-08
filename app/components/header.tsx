@@ -12,7 +12,13 @@ import { Button } from "./ui/button";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: styles }];
 
-export default function Header() {
+interface HeaderProps {
+  userId: string | number;
+}
+
+export default function Header({ userId }: HeaderProps) {
+
+
   return (
     <div className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <header className="container flex h-16 items-center justify-between">
@@ -102,7 +108,7 @@ export default function Header() {
 
           {/* Download Manager Component */}
           <div className="border-l pl-4 ml-2">
-            <DownloadManager userId="arnaud" />
+            {userId && <DownloadManager userId={userId.toString()} />}
           </div>
         </div>
       </header>

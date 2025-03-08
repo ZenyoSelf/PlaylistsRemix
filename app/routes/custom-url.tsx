@@ -5,7 +5,7 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "~/components/ui/card";
-import { getMetadataFromUrl } from "~/services/customUrlDownload.server";
+import { getMetadataFromUrl } from "~/services/ytDownload.server";
 import { saveCustomUrlSong } from "~/services/db.server";
 import { getProviderSession } from "~/services/auth.server";
 import { downloadQueue } from "~/services/queue.server";

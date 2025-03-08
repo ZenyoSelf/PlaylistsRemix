@@ -25,7 +25,6 @@ import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
 import { Loader, RefreshCw, Package, Clock, CheckSquare } from "lucide-react";
 import { jsonWithError, jsonWithSuccess } from "remix-toast";
-import { DownloadButton } from "~/components/DownloadButton";
 import { toast } from "~/components/ui/use-toast";
 import { useEffect, useState } from "react";
 import {
@@ -153,9 +152,6 @@ export async function action({
     return jsonWithError({}, "You must be logged in to use this feature");
   }
 
-  // Use the first available email
-  const userEmail = spotifyEmail || youtubeEmail;
-
   if (action === "refresh-spotify") {
     try {
       const result = await refreshSpotifyLibrary(request);
@@ -178,22 +174,39 @@ export async function action({
       const platform = formData.get("platform") as string || '';
       const playlist = formData.get("playlist") as string || '';
       const search = formData.get("search") as string || '';
+      const onlyMyPlaylists = formData.get("onlyMyPlaylists") === "true";
 
       // Create filter parameters object
       const filterParams = {
+        page: 1,
+        pageSize: 1000, // Get a large number to include all filtered songs
         platform: platform !== 'all' ? platform : '',
         playlist: playlist !== 'all' ? playlist : '',
         search,
-        songStatus: 'not-downloaded', // Only include songs that haven't been downloaded
+        songStatus: 'notDownloaded', // Only include songs that haven't been downloaded
+        onlyMyPlaylists,
       };
 
-      // Call the bulk download API
-      const response = await fetch(`/api/bulk-download`, {
+      // Get the song IDs that match the filter criteria
+      const { songs } = await getUserSongsFromDB(request, filterParams);
+      const songIds = songs.map(song => song.id.toString());
+
+      if (songIds.length === 0) {
+        return jsonWithError({}, "No songs found matching the filter criteria");
+      }
+
+
+      // Get the request URL to build an absolute URL
+      const url = new URL(request.url);
+      const baseUrl = `${url.protocol}//${url.host}`;
+
+      // Call the bulk download API with only userId and songIds using an absolute URL
+      const response = await fetch(`${baseUrl}/api/bulk-download`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ filterParams, userId: userEmail }),
+        body: JSON.stringify({ songIds,spotifyEmail,youtubeEmail }),
       });
 
       if (!response.ok) {
@@ -241,7 +254,7 @@ export async function action({
 }
 
 export default function NewAdditions() {
-  const { songs, currentPage, totalPages, platforms, playlists, lastRefreshSpotify, lastRefreshYoutube } = useLoaderData<LoaderData>();
+  const { songs, currentPage, totalPages, platforms, playlists, lastRefreshSpotify, lastRefreshYoutube, total } = useLoaderData<LoaderData>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigation = useNavigation();
   const actionData = navigation.formData;
@@ -598,7 +611,10 @@ export default function NewAdditions() {
           ) : (
             <>
               <Card>
-                <CardContent className="p-0">
+                <CardContent className="p-4">
+                  <div className="mb-4 text-sm text-muted-foreground">
+                    Showing {songs.length} of {total} songs matching your filters
+                  </div>
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -608,7 +624,7 @@ export default function NewAdditions() {
                         <TableHead>Platform</TableHead>
                         <TableHead>Playlists</TableHead>
                         <TableHead>Added At</TableHead>
-                        <TableHead>Actions</TableHead>
+
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -636,7 +652,7 @@ export default function NewAdditions() {
                           </TableCell>
                           <TableCell>
                             {song.playlists && song.playlists.length > 0 ? (
-                              <div className="max-w-[200px] truncate">
+                              <div className="max-w-[400px] truncate">
                                 {song.playlists.map(playlist => playlist.name).join(", ")}
                               </div>
                             ) : (
@@ -652,9 +668,7 @@ export default function NewAdditions() {
                               return `${day}.${month}.${year}`;
                             })()}
                           </TableCell>
-                          <TableCell>
-                            <DownloadButton songId={song.id.toString()} userId={song.user} />
-                          </TableCell>
+
                         </TableRow>
                       ))}
                     </TableBody>
@@ -750,6 +764,8 @@ export default function NewAdditions() {
                   </Pagination>
                 </div>
               )}
+
+             
             </>
           )}
         </div>

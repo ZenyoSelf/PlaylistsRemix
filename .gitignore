@@ -16,4 +16,9 @@ app/utils/ffprobe.exe
 app/utils/yt-dlp.exe
 
 # Temporary files
-app/tmp/*
+app/tmp/**
+
+app/tmp/**/**/**
+# Ignore all files and directories under tmp
+/tmp/
+/app/tmp/

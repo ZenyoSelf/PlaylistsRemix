@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "~/components/ui/button";
 import { Progress } from "~/components/ui/progress";
-import { X, Download, RefreshCw, Package } from "lucide-react";
+import { X, Download, RefreshCw } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -16,6 +16,7 @@ interface DownloadJob {
   error?: string;
   filePath?: string;
   isBulk?: boolean;
+  errorTime?: number;
 }
 
 export function DownloadManager({ userId }: { userId: string }) {
@@ -35,76 +36,101 @@ export function DownloadManager({ userId }: { userId: string }) {
     if (!userId) return;
 
     const eventSource = new EventSource(`/api/download-progress?userId=${userId}`);
+    
+    // Add a connection status indicator
+    console.log(`EventSource connected for user ${userId}`);
+    
+    eventSource.onopen = () => {
+      console.log(`EventSource connection opened for user ${userId}`);
+    };
 
     eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      
-      if (data.type === 'queued') {
-        setJobs(prevJobs => {
-          if (prevJobs.some(job => job.id === data.jobId)) {
-            return prevJobs;
-          }
-          
-          // Check if this is a bulk download
-          const isBulk = data.jobId.startsWith('bulk-') || data.songName.includes('Bulk download');
-          
-          return [...prevJobs, {
-            id: data.jobId,
-            songName: data.songName,
-            progress: 0,
-            status: 'queued',
-            isBulk
-          }];
-        });
-      } else if (data.type === 'progress') {
-        setJobs(prevJobs => 
-          prevJobs.map(job => 
-            job.id === data.jobId 
-              ? { 
-                  ...job, 
-                  progress: data.progress, 
-                  status: 'downloading',
-                  isBulk: job.isBulk || data.jobId.startsWith('bulk-') || data.songName.includes('Bulk download')
-                } 
-              : job
-          )
-        );
-      } else if (data.type === 'complete') {
-        setJobs(prevJobs => 
-          prevJobs.map(job => 
-            job.id === data.jobId 
-              ? { 
-                  ...job, 
-                  progress: 100, 
-                  status: 'completed', 
-                  filePath: data.filePath,
-                  isBulk: job.isBulk || data.jobId.startsWith('bulk-') || data.songName.includes('Bulk download')
-                } 
-              : job
-          )
-        );
-      } else if (data.type === 'error') {
-        setJobs(prevJobs => 
-          prevJobs.map(job => 
-            job.id === data.jobId 
-              ? { 
-                  ...job, 
-                  status: 'error', 
-                  error: data.error,
-                  isBulk: job.isBulk || data.jobId.startsWith('bulk-') || data.songName.includes('Bulk download')
-                } 
-              : job
-          )
-        );
+      try {
+        const data = JSON.parse(event.data);
+        console.log(`Received event for job ${data.jobId}:`, data);
+        
+        if (data.type === 'queued') {
+          setJobs(prevJobs => {
+            // Don't add duplicate jobs
+            if (prevJobs.some(job => job.id === data.jobId)) {
+              return prevJobs;
+            }
+            
+            // Check if this is a bulk download
+            const isBulk = data.jobId.toString().startsWith('bulk-') || 
+                          data.songName.includes('Bulk download') ||
+                          data.isBulk === true;
+            
+            return [...prevJobs, {
+              id: data.jobId,
+              songName: data.songName,
+              progress: 0,
+              status: 'queued',
+              isBulk
+            }];
+          });
+        } else if (data.type === 'progress') {
+          setJobs(prevJobs => 
+            prevJobs.map(job => 
+              job.id === data.jobId 
+                ? { 
+                    ...job, 
+                    progress: data.progress, 
+                    status: 'downloading',
+                    songName: data.songName || job.songName,
+                    isBulk: job.isBulk || data.isBulk === true || data.jobId.toString().startsWith('bulk-') || data.songName.includes('Bulk download')
+                  } 
+                : job
+            )
+          );
+        } else if (data.type === 'complete') {
+          setJobs(prevJobs => 
+            prevJobs.map(job => 
+              job.id === data.jobId 
+                ? { 
+                    ...job, 
+                    progress: 100, 
+                    status: 'completed', 
+                    filePath: data.filePath,
+                    songName: data.songName || job.songName,
+                    isBulk: job.isBulk || data.isBulk === true || data.jobId.toString().startsWith('bulk-') || data.songName.includes('Bulk download')
+                  } 
+                : job
+            )
+          );
+        } else if (data.type === 'error') {
+          setJobs(prevJobs => 
+            prevJobs.map(job => 
+              job.id === data.jobId 
+                ? { 
+                    ...job, 
+                    status: 'error', 
+                    error: data.error,
+                    songName: data.songName || job.songName,
+                    isBulk: job.isBulk || data.isBulk === true || data.jobId.toString().startsWith('bulk-') || data.songName.includes('Bulk download'),
+                    errorTime: Date.now()
+                  } 
+                : job
+            )
+          );
+        }
+      } catch (error) {
+        console.error('Error processing event:', error, event.data);
       }
     };
 
     eventSource.onerror = (error) => {
       console.error('EventSource error:', error);
-      eventSource.close();
+      // Try to reconnect after a delay instead of closing
+      setTimeout(() => {
+        eventSource.close();
+        // The useEffect cleanup will run and a new connection will be established on the next render
+        setJobs(prev => [...prev]); // Force a re-render
+      }, 5000);
     };
 
     return () => {
+      console.log(`Closing EventSource for user ${userId}`);
       eventSource.close();
     };
   }, [userId]);
@@ -115,6 +141,7 @@ export function DownloadManager({ userId }: { userId: string }) {
     
     try {
       setIsLoading(true);
+      console.log(`Fetching active jobs for user ${userId}`);
       const response = await fetch(`/api/active-jobs?userId=${userId}`);
       
       if (!response.ok) {
@@ -122,31 +149,46 @@ export function DownloadManager({ userId }: { userId: string }) {
       }
       
       const data = await response.json();
+      console.log(`Received ${data.jobs.length} active jobs:`, data.jobs);
       
       // Merge with existing jobs to avoid losing progress information
       setJobs(prevJobs => {
         const newJobs = data.jobs.map((job: {
           id: string;
-          status: 'active' | 'queued' | 'delayed';
+          status: 'downloading' | 'queued' | 'completed';
           data: {
-            songId: string;
+            songId?: string;
             userId: string;
             songName: string;
             type?: string;
+            zipPath?: string;
           };
           progress: number;
-        }) => ({
-          id: job.id,
-          songName: job.data.songName || 'Unknown Song',
-          progress: job.progress || 0,
-          status: job.status === 'active' ? 'downloading' : job.status,
-          isBulk: job.id.startsWith('bulk-') || job.data.type === 'bulk' || (job.data.songName && job.data.songName.includes('Bulk download'))
-        }));
+          isBulk: boolean;
+        }) => {
+          // Find existing job to preserve any real-time progress updates
+          const existingJob = prevJobs.find(j => j.id === job.id);
+          
+          // For bulk downloads, ensure progress is properly tracked
+          const isBulk = job.isBulk || job.data.type === 'bulk' || job.id.toString().startsWith('bulk-');
+          
+          return {
+            id: job.id,
+            songName: job.data.songName || existingJob?.songName || 'Unknown Song',
+            progress: existingJob?.progress || job.progress || 0,
+            status: job.status || existingJob?.status || 'queued',
+            isBulk,
+            filePath: job.data.zipPath || existingJob?.filePath,
+            error: existingJob?.error
+          };
+        });
         
-        // Keep existing jobs that aren't in the new list
+        // Keep existing jobs that aren't in the new list and aren't errors
+        // or are errors that haven't been acknowledged
         const existingJobIds = new Set(newJobs.map((job: { id: string }) => job.id));
         const filteredPrevJobs = prevJobs.filter(job => 
-          !existingJobIds.has(job.id) && job.status !== 'error'
+          (!existingJobIds.has(job.id) && job.status !== 'error') || 
+          (job.status === 'error' && Date.now() - (job.errorTime || 0) < 60000)
         );
         
         return [...newJobs, ...filteredPrevJobs];
@@ -254,50 +296,54 @@ export function DownloadManager({ userId }: { userId: string }) {
               {jobs.map((job) => (
                 <div
                   key={job.id}
-                  className="flex flex-col rounded-md border p-2"
+                  className="flex flex-col border-b p-3 last:border-0"
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      {job.isBulk ? (
-                        <Package className="h-4 w-4 text-primary" />
-                      ) : (
-                        <Download className="h-4 w-4 text-primary" />
-                      )}
-                      <span className="text-sm font-medium truncate max-w-[180px]" title={job.songName}>
-                        {job.songName}
+                      {getStatusIcon(job)}
+                      <span className="font-medium truncate max-w-[180px]" title={job.songName}>
+                        {job.isBulk ? "🗃️ " : ""}{job.songName}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      {getStatusIcon(job)}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => removeJob(job.id)}
-                      >
-                        <X className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="mt-2">
-                    <Progress value={job.progress} className="h-1" />
-                  </div>
-                  {job.status === 'completed' && (
                     <Button
                       variant="ghost"
-                      size="sm"
-                      className="mt-2 h-7 text-xs"
-                      onClick={() => handleDownload(job.id, job.isBulk)}
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => removeJob(job.id)}
                     >
-                      <Download className="mr-1 h-3 w-3" />
-                      Download
+                      <X className="h-4 w-4" />
                     </Button>
-                  )}
-                  {job.status === 'error' && (
-                    <p className="mt-1 text-xs text-red-500">
-                      {job.error || 'Download failed'}
-                    </p>
-                  )}
+                  </div>
+                  <div className="mt-2">
+                    <Progress value={job.progress} className="h-2" />
+                  </div>
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">
+                      {job.status === 'queued'
+                        ? 'Queued'
+                        : job.status === 'downloading'
+                        ? `${job.progress}%`
+                        : job.status === 'completed'
+                        ? 'Completed'
+                        : 'Error'}
+                    </span>
+                    {job.status === 'completed' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-xs"
+                        onClick={() => handleDownload(job.id, job.isBulk)}
+                      >
+                        <Download className="mr-1 h-3 w-3" />
+                        Download {job.isBulk ? "ZIP" : ""}
+                      </Button>
+                    )}
+                    {job.status === 'error' && (
+                      <span className="text-xs text-red-500">
+                        {job.error || 'Unknown error'}
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

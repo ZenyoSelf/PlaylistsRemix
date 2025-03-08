@@ -272,8 +272,9 @@ export async function downloadSpotifySong(
       throw new Error(`Could not find YouTube video for: ${trackName} by ${artists.join(", ")}`);
     }
 
+    // Create the output directory with the correct structure: tmp/userId/playlistName
     const outputDir = path.join(process.cwd(), "tmp", userId, playlistName);
-    console.log(outputDir)
+    console.log(`Creating output directory: ${outputDir}`);
     await fs.mkdir(outputDir, { recursive: true });
 
     // Store original filename for Content-Disposition

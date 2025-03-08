@@ -13,6 +13,7 @@ export interface DownloadJobData {
   songs?: Song[];
   bulkSongIds?: string[];
   jobId?: string;
+  zipPath?: string;
 }
 
 // Create download queue
@@ -50,10 +51,15 @@ export const cleanupQueue = new Queue('cleanup-queue', {
 });
 
 // Process cleanup jobs
-cleanupQueue.process(async (job) => {
+cleanupQueue.process(async () => {
   console.log('Running cleanup job...');
-  const result = await cleanupOldFiles();
-  return { deletedCount: result.deletedCount, totalSize: result.totalSize };
+  try {
+    await cleanupOldFiles();
+    return { success: true };
+  } catch (error) {
+    console.error('Error during cleanup:', error);
+    return { success: false, error: String(error) };
+  }
 });
 
 // Schedule cleanup job to run every 2 days
