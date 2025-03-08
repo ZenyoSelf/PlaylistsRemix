@@ -12,7 +12,7 @@ interface DownloadJob {
   id: string;
   songName: string;
   progress: number;
-  status: 'queued' | 'downloading' | 'completed' | 'error';
+  status: 'queued' | 'downloading' | 'completed' | 'error' | 'usercancelled';
   error?: string;
   filePath?: string;
   isBulk?: boolean;
@@ -176,18 +176,20 @@ export function DownloadManager({ userId }: { userId: string }) {
             id: job.id,
             songName: job.data.songName || existingJob?.songName || 'Unknown Song',
             progress: existingJob?.progress || job.progress || 0,
-            status: job.status || existingJob?.status || 'queued',
+            status: existingJob?.status === 'usercancelled' 
+              ? 'usercancelled' 
+              : (job.status || existingJob?.status || 'queued'),
             isBulk,
             filePath: job.data.zipPath || existingJob?.filePath,
             error: existingJob?.error
           };
         });
         
-        // Keep existing jobs that aren't in the new list and aren't errors
+        // Keep existing jobs that aren't in the new list and aren't errors or cancelled
         // or are errors that haven't been acknowledged
         const existingJobIds = new Set(newJobs.map((job: { id: string }) => job.id));
         const filteredPrevJobs = prevJobs.filter(job => 
-          (!existingJobIds.has(job.id) && job.status !== 'error') || 
+          (!existingJobIds.has(job.id) && job.status !== 'error' && job.status !== 'usercancelled') || 
           (job.status === 'error' && Date.now() - (job.errorTime || 0) < 60000)
         );
         
@@ -239,8 +241,33 @@ export function DownloadManager({ userId }: { userId: string }) {
     }
   };
 
-  const removeJob = (jobId: string) => {
-    setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
+  const removeJob = async (jobId: string) => {
+    try {
+      // First, mark the job as cancelled in the UI
+      setJobs(prevJobs => prevJobs.map(job => 
+        job.id === jobId 
+          ? { ...job, status: 'usercancelled' } 
+          : job
+      ));
+
+      // Then, send a request to cancel the job on the server
+      const response = await fetch(`/api/cancel-job/${jobId}?userId=${userId}`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        console.error('Failed to cancel job on server');
+      }
+
+      // Finally, remove the job from the UI after a short delay
+      setTimeout(() => {
+        setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
+      }, 500);
+    } catch (error) {
+      console.error('Error cancelling job:', error);
+      // If there's an error, still remove the job from the UI
+      setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
+    }
   };
 
   const getStatusIcon = (job: DownloadJob) => {
@@ -252,6 +279,8 @@ export function DownloadManager({ userId }: { userId: string }) {
       return <div className="h-2 w-2 rounded-full bg-green-500"></div>;
     } else if (job.status === 'error') {
       return <div className="h-2 w-2 rounded-full bg-red-500"></div>;
+    } else if (job.status === 'usercancelled') {
+      return <div className="h-2 w-2 rounded-full bg-gray-500"></div>;
     }
   };
 
@@ -301,7 +330,7 @@ export function DownloadManager({ userId }: { userId: string }) {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       {getStatusIcon(job)}
-                      <span className="font-medium truncate max-w-[180px]" title={job.songName}>
+                      <span className="font-medium  max-w-[240px]" title={job.songName}>
                         {job.isBulk ? "🗃️ " : ""}{job.songName}
                       </span>
                     </div>
@@ -325,6 +354,8 @@ export function DownloadManager({ userId }: { userId: string }) {
                         ? `${job.progress}%`
                         : job.status === 'completed'
                         ? 'Completed'
+                        : job.status === 'usercancelled'
+                        ? 'Cancelled'
                         : 'Error'}
                     </span>
                     {job.status === 'completed' && (

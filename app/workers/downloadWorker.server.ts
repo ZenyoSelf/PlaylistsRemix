@@ -20,7 +20,7 @@ interface DownloadJobData {
 const eventSources = new Map<string, Set<(data: ProgressData) => void>>();
 
 interface ProgressData {
-  type: 'progress' | 'complete' | 'error' | 'queued';
+  type: 'progress' | 'complete' | 'error' | 'queued' | 'usercancelled';
   progress?: number;
   jobId: string | number;
   songName: string;

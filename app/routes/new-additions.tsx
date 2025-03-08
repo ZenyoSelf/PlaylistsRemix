@@ -175,11 +175,12 @@ export async function action({
       const playlist = formData.get("playlist") as string || '';
       const search = formData.get("search") as string || '';
       const onlyMyPlaylists = formData.get("onlyMyPlaylists") === "true";
-
+      const total = formData.get("total") as string || 20;
       // Create filter parameters object
+      //Should be getting from a new method, but hacky way to get it for now
       const filterParams = {
         page: 1,
-        pageSize: 1000, // Get a large number to include all filtered songs
+        itemsPerPage: Number(total), // Get a large number to include all filtered songs
         platform: platform !== 'all' ? platform : '',
         playlist: playlist !== 'all' ? playlist : '',
         search,
@@ -206,7 +207,7 @@ export async function action({
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ songIds,spotifyEmail,youtubeEmail }),
+        body: JSON.stringify({ songIds, spotifyEmail, youtubeEmail }),
       });
 
       if (!response.ok) {
@@ -228,18 +229,18 @@ export async function action({
     try {
       const beforeDate = formData.get("beforeDate") as string;
       const onlyMyPlaylists = formData.get("onlyMyPlaylists") === "true";
-      
+
       if (!beforeDate) {
         return jsonWithError({}, "Please select a date");
       }
-      
+
       // Convert date to ISO string if it's not already
       const dateObj = new Date(beforeDate);
       const isoDate = dateObj.toISOString();
-      
+
       // Mark songs as downloaded
       const updatedCount = await markSongsAsDownloadedBeforeDate(request, isoDate, onlyMyPlaylists);
-      
+
       return jsonWithSuccess(
         { updatedCount },
         `Marked ${updatedCount} songs as downloaded`
@@ -465,8 +466,8 @@ export default function NewAdditions() {
                     </label>
                     <div id="my-playlists-filter" className="flex items-center h-10 px-3 border rounded-md">
                       <Checkbox id="only-my-playlists" checked={searchParams.get("onlyMyPlaylists") === "true"} onCheckedChange={(checked) => {
-                         const newParams = new URLSearchParams(searchParams);
-                        if(checked === true){
+                        const newParams = new URLSearchParams(searchParams);
+                        if (checked === true) {
                           newParams.set("onlyMyPlaylists", "true");
                         } else {
                           newParams.delete("onlyMyPlaylists");
@@ -512,17 +513,17 @@ export default function NewAdditions() {
                             Mark songs added before a specific date as downloaded without actually downloading them.
                           </DialogDescription>
                         </DialogHeader>
-                        <Form 
-                          method="post" 
+                        <Form
+                          method="post"
                           onSubmit={() => {
                             setIsDialogOpen(false);
                           }}
                         >
                           <input type="hidden" name="action" value="mark-as-downloaded" />
-                          <input 
-                            type="hidden" 
-                            name="beforeDate" 
-                            value={selectedDate ? selectedDate.toISOString() : new Date().toISOString()} 
+                          <input
+                            type="hidden"
+                            name="beforeDate"
+                            value={selectedDate ? selectedDate.toISOString() : new Date().toISOString()}
                           />
                           <div className="grid gap-4 py-4">
                             <div className="grid grid-cols-4 items-center gap-4">
@@ -530,9 +531,9 @@ export default function NewAdditions() {
                                 Before Date
                               </Label>
                               <div className="col-span-3">
-                                <DatePicker 
-                                  date={selectedDate} 
-                                  setDate={setSelectedDate} 
+                                <DatePicker
+                                  date={selectedDate}
+                                  setDate={setSelectedDate}
                                 />
                               </div>
                             </div>
@@ -541,9 +542,9 @@ export default function NewAdditions() {
                                 Filter
                               </Label>
                               <div className="flex items-center space-x-2 col-span-3">
-                                <Checkbox 
-                                  id="onlyMyPlaylists" 
-                                  name="onlyMyPlaylists" 
+                                <Checkbox
+                                  id="onlyMyPlaylists"
+                                  name="onlyMyPlaylists"
                                   value="true"
                                   checked={onlyMyPlaylists}
                                   onCheckedChange={(checked) => {
@@ -560,8 +561,8 @@ export default function NewAdditions() {
                             </div>
                           </div>
                           <DialogFooter>
-                            <Button 
-                              type="submit" 
+                            <Button
+                              type="submit"
                               disabled={isSubmittingAction("mark-as-downloaded")}
                             >
                               {isSubmittingAction("mark-as-downloaded") ? (
@@ -576,6 +577,7 @@ export default function NewAdditions() {
                     </Dialog>
                     <Form method="post" className="flex-shrink-0">
                       <input type="hidden" name="action" value="download-all" />
+                      <input type="hidden" name="total" value={total} />
                       <input type="hidden" name="platform" value={searchParams.get("platform") || "all"} />
                       <input type="hidden" name="playlist" value={searchParams.get("playlist") || "all"} />
                       <input type="hidden" name="search" value={searchParams.get("search") || ""} />
@@ -765,7 +767,7 @@ export default function NewAdditions() {
                 </div>
               )}
 
-             
+
             </>
           )}
         </div>
