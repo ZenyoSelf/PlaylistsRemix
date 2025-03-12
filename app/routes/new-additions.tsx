@@ -26,7 +26,7 @@ import { Button } from "~/components/ui/button";
 import { Loader, RefreshCw, Package, Clock, CheckSquare } from "lucide-react";
 import { jsonWithError, jsonWithSuccess } from "remix-toast";
 import { toast } from "~/components/ui/use-toast";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -51,7 +51,7 @@ interface LoaderData {
   totalPages: number;
   total: number;
   platforms: string[];
-  playlists: string[];
+  playlists: { name: string, platform: string }[];
   lastRefreshSpotify: string | null;
   lastRefreshYoutube: string | null;
 }
@@ -86,6 +86,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const sortBy = url.searchParams.get("sortBy") || "platform_added_at";
   const sortDirection = url.searchParams.get("sortDirection") || "desc";
   const onlyMyPlaylists = url.searchParams.get("onlyMyPlaylists") === "true";
+  
+  // Get excluded playlists from URL parameters
+  const excludedPlaylists = url.searchParams.get("excludedPlaylists") 
+    ? url.searchParams.get("excludedPlaylists")!.split(',')
+    : [];
 
   try {
     // Get songs that haven't been downloaded yet
@@ -100,6 +105,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       sortDirection: sortDirection as "asc" | "desc",
       itemsPerPage: 10, // Reduced from default 20 to limit simultaneous file system checks
       onlyMyPlaylists, // Add this parameter to filter by user's playlists
+      excludedPlaylists, // Add excluded playlists
     });
 
     // Get filter options
@@ -175,6 +181,7 @@ export async function action({
       const playlist = formData.get("playlist") as string || '';
       const search = formData.get("search") as string || '';
       const onlyMyPlaylists = formData.get("onlyMyPlaylists") === "true";
+      const excludedPlaylists = formData.get("excludedPlaylists") as string || '';
 
       // Create filter parameters object
       const filterParams = {
@@ -183,6 +190,7 @@ export async function action({
         search,
         songStatus: 'notDownloaded', // Only include songs that haven't been downloaded
         onlyMyPlaylists,
+        excludedPlaylists: excludedPlaylists ? excludedPlaylists.split(',') : [],
       };
 
       // Get all song IDs that match the filter criteria without pagination
@@ -224,6 +232,8 @@ export async function action({
     try {
       const beforeDate = formData.get("beforeDate") as string;
       const onlyMyPlaylists = formData.get("onlyMyPlaylists") === "true";
+      const excludedPlaylistsStr = formData.get("excludedPlaylists") as string || '';
+      const excludedPlaylists = excludedPlaylistsStr ? excludedPlaylistsStr.split(',') : [];
 
       if (!beforeDate) {
         return jsonWithError({}, "Please select a date");
@@ -234,7 +244,7 @@ export async function action({
       const isoDate = dateObj.toISOString();
 
       // Mark songs as downloaded
-      const updatedCount = await markSongsAsDownloadedBeforeDate(request, isoDate, onlyMyPlaylists);
+      const updatedCount = await markSongsAsDownloadedBeforeDate(request, isoDate, onlyMyPlaylists, excludedPlaylists);
 
       return jsonWithSuccess(
         { updatedCount },
@@ -243,6 +253,25 @@ export async function action({
     } catch (error) {
       console.error("Error marking songs as downloaded:", error);
       return jsonWithError({}, error instanceof Error ? error.message : "Failed to mark songs as downloaded");
+    }
+  } else if (action === "save-excluded-playlists") {
+    try {
+      // Get the excluded playlist names from the form data
+      const excludedPlaylists = formData.getAll("excludedPlaylists").map(name => name.toString());
+      
+      // Redirect to the same page with the excluded playlists in the URL
+      const url = new URL(request.url);
+      
+      if (excludedPlaylists.length > 0) {
+        url.searchParams.set("excludedPlaylists", excludedPlaylists.join(','));
+      } else {
+        url.searchParams.delete("excludedPlaylists");
+      }
+      
+      return redirect(url.toString());
+    } catch (error) {
+      console.error("Error saving excluded playlists:", error);
+      return jsonWithError({}, error instanceof Error ? error.message : "Failed to save excluded playlists");
     }
   }
 
@@ -255,8 +284,70 @@ export default function NewAdditions() {
   const navigation = useNavigation();
   const actionData = navigation.formData;
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isExcludeDialogOpen, setIsExcludeDialogOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [onlyMyPlaylists, setOnlyMyPlaylists] = useState(false);
+  const [expandedPlatforms, setExpandedPlatforms] = useState<Record<string, boolean>>({
+    "Spotify": true,
+    "Youtube": true
+  });
+  
+  // Initialize selectedPlaylists from URL parameters
+  const [selectedPlaylists, setSelectedPlaylists] = useState<string[]>(
+    searchParams.get("excludedPlaylists") 
+      ? searchParams.get("excludedPlaylists")!.split(',')
+      : []
+  );
+  
+  // Group playlists by platform
+  const playlistsByPlatform = useMemo(() => {
+    const grouped: Record<string, string[]> = {};
+    
+    playlists.forEach(playlist => {
+      // Use the platform information from the playlist object
+      const platformKey = playlist.platform === "Youtube" ? "Youtube" : 
+                         playlist.platform === "Spotify" ? "Spotify" : "Other";
+      
+      grouped[platformKey] = grouped[platformKey] || [];
+      grouped[platformKey].push(playlist.name);
+    });
+    
+    return grouped;
+  }, [playlists]);
+  
+  // Add state for playlist search
+  const [playlistSearch, setPlaylistSearch] = useState("");
+  
+  // Filter playlists based on search term
+  const filteredPlaylistsByPlatform = useMemo(() => {
+    if (!playlistSearch.trim()) {
+      return playlistsByPlatform;
+    }
+    
+    const searchTerm = playlistSearch.toLowerCase();
+    const filtered: Record<string, string[]> = {};
+    
+    Object.entries(playlistsByPlatform).forEach(([platform, playlists]) => {
+      const filteredPlaylists = playlists.filter(playlist => 
+        playlist.toLowerCase().includes(searchTerm)
+      );
+      
+      if (filteredPlaylists.length > 0) {
+        filtered[platform] = filteredPlaylists;
+      }
+    });
+    
+    return filtered;
+  }, [playlistsByPlatform, playlistSearch]);
+  
+  // Toggle platform expansion
+  const togglePlatformExpansion = (platform: string) => {
+    setExpandedPlatforms(prev => ({
+      ...prev,
+      [platform]: !prev[platform]
+    }));
+  };
+  
   // Show toast notifications for action results
   useEffect(() => {
     if (navigation.state === "loading" && navigation.formData?.get("action") === "download-all") {
@@ -344,6 +435,46 @@ export default function NewAdditions() {
     }
   };
 
+  // Add this function to handle checkbox changes for excluded playlists
+  const handlePlaylistCheckboxChange = (playlistName: string) => {
+    setSelectedPlaylists(prev => {
+      if (prev.includes(playlistName)) {
+        return prev.filter(name => name !== playlistName);
+      } else {
+        return [...prev, playlistName];
+      }
+    });
+  };
+
+  // Add these functions to handle select all and deselect all
+  const selectAllPlaylistsForPlatform = (platform: string) => {
+    const platformPlaylists = playlistsByPlatform[platform] || [];
+    const newSelectedPlaylists = [...selectedPlaylists];
+    
+    platformPlaylists.forEach(playlist => {
+      if (!newSelectedPlaylists.includes(playlist)) {
+        newSelectedPlaylists.push(playlist);
+      }
+    });
+    
+    setSelectedPlaylists(newSelectedPlaylists);
+  };
+  
+  const deselectAllPlaylistsForPlatform = (platform: string) => {
+    const platformPlaylists = playlistsByPlatform[platform] || [];
+    const newSelectedPlaylists = selectedPlaylists.filter(
+      playlist => !platformPlaylists.includes(playlist)
+    );
+    
+    setSelectedPlaylists(newSelectedPlaylists);
+  };
+
+  // Add this function to count selected playlists for a platform
+  const getSelectedPlaylistsCountForPlatform = (platform: string) => {
+    const platformPlaylists = playlistsByPlatform[platform] || [];
+    return platformPlaylists.filter(playlist => selectedPlaylists.includes(playlist)).length;
+  };
+
   return (
     <div className="container py-8">
       <div className="flex flex-col gap-6">
@@ -407,8 +538,9 @@ export default function NewAdditions() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-col md:flex-row gap-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1">
+              <div className="flex flex-col gap-4">
+                {/* First row: Platform, Playlist, and Ownership filters */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="w-full">
                     <label htmlFor="platform-filter" className="text-sm font-medium mb-1 block">
                       Platform
@@ -447,8 +579,8 @@ export default function NewAdditions() {
                         <SelectContent className="min-w-[200px] max-h-[300px]">
                           <SelectItem value="all">All Playlists</SelectItem>
                           {playlists.map((playlist) => (
-                            <SelectItem key={playlist} value={playlist}>
-                              {playlist}
+                            <SelectItem key={playlist.name} value={playlist.name}>
+                              {playlist.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -471,17 +603,19 @@ export default function NewAdditions() {
                         setSearchParams(newParams);
                       }}></Checkbox>
 
-                      <label htmlFor="only-my-playlists" className="text-sm">
+                      <label htmlFor="only-my-playlists" className="text-sm ml-2">
                         Only my playlists
                       </label>
                     </div>
                   </div>
                 </div>
-                <div className="flex-1">
-                  <label htmlFor="search-input" className="text-sm font-medium mb-1 block">
-                    Search
-                  </label>
-                  <div className="flex gap-2">
+                
+                {/* Second row: Search and action buttons */}
+                <div className="flex flex-col md:flex-row gap-4 items-end">
+                  <div className="flex-1">
+                    <label htmlFor="search-input" className="text-sm font-medium mb-1 block">
+                      Search
+                    </label>
                     <Input
                       id="search-input"
                       type="text"
@@ -490,6 +624,192 @@ export default function NewAdditions() {
                       onChange={(e) => handleSearch(e.target.value)}
                       className="w-full"
                     />
+                  </div>
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    <Dialog open={isExcludeDialogOpen} onOpenChange={setIsExcludeDialogOpen}>
+                      <DialogTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className="whitespace-nowrap"
+                          title="Exclude playlists from the new additions view"
+                        >
+                          <svg 
+                            className="mr-2 h-4 w-4" 
+                            width="15" 
+                            height="15" 
+                            viewBox="0 0 15 15" 
+                            fill="none" 
+                            xmlns="http://www.w3.org/2000/svg"
+                          >
+                            <path 
+                              d="M1.5 3C1.22386 3 1 3.22386 1 3.5C1 3.77614 1.22386 4 1.5 4H13.5C13.7761 4 14 3.77614 14 3.5C14 3.22386 13.7761 3 13.5 3H1.5ZM1.5 7C1.22386 7 1 7.22386 1 7.5C1 7.77614 1.22386 8 1.5 8H13.5C13.7761 8 14 7.77614 14 7.5C14 7.22386 13.7761 7 13.5 7H1.5ZM1 11.5C1 11.2239 1.22386 11 1.5 11H13.5C13.7761 11 14 11.2239 14 11.5C14 11.7761 13.7761 12 13.5 12H1.5C1.22386 12 1 11.7761 1 11.5Z" 
+                              fill="currentColor" 
+                              fillRule="evenodd" 
+                              clipRule="evenodd"
+                            ></path>
+                          </svg>
+                          Exclude Playlists
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-[500px] max-h-[80vh]">
+                        <DialogHeader>
+                          <DialogTitle>Exclude Playlists</DialogTitle>
+                          <DialogDescription>
+                            Select playlists to exclude from the new additions view. Songs that are only in these playlists will not be shown.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <Form
+                          method="post"
+                          onSubmit={() => {
+                            setIsExcludeDialogOpen(false);
+                          }}
+                        >
+                          <input type="hidden" name="action" value="save-excluded-playlists" />
+                          <div className="py-2">
+                            <div className="relative">
+                              <input
+                                type="text"
+                                placeholder="Search playlists..."
+                                className="w-full px-3 py-2 border rounded-md"
+                                value={playlistSearch}
+                                onChange={(e) => setPlaylistSearch(e.target.value)}
+                              />
+                              {playlistSearch && (
+                                <button
+                                  type="button"
+                                  className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                                  onClick={() => setPlaylistSearch("")}
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="py-4 overflow-y-auto max-h-[50vh]">
+                            {Object.entries(filteredPlaylistsByPlatform).map(([platform, platformPlaylists]) => (
+                              <div key={platform} className="mb-4 border rounded-md p-3">
+                                <div 
+                                  className="flex items-center justify-between cursor-pointer"
+                                  onClick={() => togglePlatformExpansion(platform)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      togglePlatformExpansion(platform);
+                                    }
+                                  }}
+                                  role="button"
+                                  tabIndex={0}
+                                  aria-expanded={expandedPlatforms[platform]}
+                                >
+                                  <h3 className="text-sm font-medium">{platform}</h3>
+                                  <div className="flex items-center">
+                                    <span className="text-xs text-muted-foreground mr-2">
+                                      {getSelectedPlaylistsCountForPlatform(platform)}/{playlistsByPlatform[platform].length} selected
+                                    </span>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 w-8 p-0"
+                                    >
+                                      {expandedPlatforms[platform] ? (
+                                        <svg 
+                                          className="h-4 w-4" 
+                                          width="15" 
+                                          height="15" 
+                                          viewBox="0 0 15 15" 
+                                          fill="none" 
+                                          xmlns="http://www.w3.org/2000/svg"
+                                        >
+                                          <path 
+                                            d="M3.13523 6.15803C3.3241 5.95657 3.64052 5.94637 3.84197 6.13523L7.5 9.56464L11.158 6.13523C11.3595 5.94637 11.6759 5.95657 11.8648 6.15803C12.0536 6.35949 12.0434 6.67591 11.842 6.86477L7.84197 10.6148C7.64964 10.7951 7.35036 10.7951 7.15803 10.6148L3.15803 6.86477C2.95657 6.67591 2.94637 6.35949 3.13523 6.15803Z" 
+                                            fill="currentColor" 
+                                            fillRule="evenodd" 
+                                            clipRule="evenodd"
+                                          ></path>
+                                        </svg>
+                                      ) : (
+                                        <svg 
+                                          className="h-4 w-4" 
+                                          width="15" 
+                                          height="15" 
+                                          viewBox="0 0 15 15" 
+                                          fill="none" 
+                                          xmlns="http://www.w3.org/2000/svg"
+                                        >
+                                          <path 
+                                            d="M6.1584 3.13508C6.35985 2.94621 6.67627 2.95642 6.86514 3.15788L10.6151 7.15788C10.7954 7.3502 10.7954 7.64949 10.6151 7.84182L6.86514 11.8418C6.67627 12.0433 6.35985 12.0535 6.1584 11.8646C5.95694 11.6757 5.94673 11.3593 6.1356 11.1579L9.565 7.49985L6.1356 3.84182C5.94673 3.64036 5.95694 3.32394 6.1584 3.13508Z" 
+                                            fill="currentColor" 
+                                            fillRule="evenodd" 
+                                            clipRule="evenodd"
+                                          ></path>
+                                        </svg>
+                                      )}
+                                    </Button>
+                                  </div>
+                                </div>
+                                {expandedPlatforms[platform] && (
+                                  <div className="mt-2 pl-2">
+                                    <div className="flex justify-end space-x-2 mb-2">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => selectAllPlaylistsForPlatform(platform)}
+                                      >
+                                        Select All
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => deselectAllPlaylistsForPlatform(platform)}
+                                      >
+                                        Deselect All
+                                      </Button>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-2">
+                                      {platformPlaylists.map((playlist) => (
+                                        <div key={playlist} className="flex items-center space-x-2">
+                                          <Checkbox
+                                            id={`playlist-${playlist}`}
+                                            name="excludedPlaylists"
+                                            value={playlist}
+                                            checked={selectedPlaylists.includes(playlist)}
+                                            onCheckedChange={() => {
+                                              handlePlaylistCheckboxChange(playlist);
+                                            }}
+                                          />
+                                          <label
+                                            htmlFor={`playlist-${playlist}`}
+                                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                                          >
+                                            {playlist}
+                                          </label>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          <DialogFooter>
+                            <Button
+                              type="submit"
+                              disabled={isSubmittingAction("save-excluded-playlists")}
+                            >
+                              {isSubmittingAction("save-excluded-playlists") ? (
+                                <Loader className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                "Save Exclusions"
+                              )}
+                            </Button>
+                          </DialogFooter>
+                        </Form>
+                      </DialogContent>
+                    </Dialog>
+                    
                     <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                       <DialogTrigger asChild>
                         <Button
@@ -520,6 +840,7 @@ export default function NewAdditions() {
                             name="beforeDate"
                             value={selectedDate ? selectedDate.toISOString() : new Date().toISOString()}
                           />
+                          <input type="hidden" name="excludedPlaylists" value={searchParams.get("excludedPlaylists") || ""} />
                           <div className="grid gap-4 py-4">
                             <div className="grid grid-cols-4 items-center gap-4">
                               <Label htmlFor="date-picker" className="text-right">
@@ -570,12 +891,14 @@ export default function NewAdditions() {
                         </Form>
                       </DialogContent>
                     </Dialog>
+                    
                     <Form method="post" className="flex-shrink-0">
                       <input type="hidden" name="action" value="download-all" />
                       <input type="hidden" name="platform" value={searchParams.get("platform") || "all"} />
                       <input type="hidden" name="playlist" value={searchParams.get("playlist") || "all"} />
                       <input type="hidden" name="search" value={searchParams.get("search") || ""} />
                       <input type="hidden" name="onlyMyPlaylists" value={searchParams.get("onlyMyPlaylists") || "false"} />
+                      <input type="hidden" name="excludedPlaylists" value={searchParams.get("excludedPlaylists") || ""} />
                       <Button
                         type="submit"
                         variant="default"

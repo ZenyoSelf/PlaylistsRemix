@@ -164,12 +164,14 @@ export async function updateSongLocalStatus(songId: string, local: boolean) {
  * @param request Request object
  * @param beforeDate Date string - mark songs added before this date
  * @param onlyMyPlaylists Whether to only include songs from playlists owned by the user
+ * @param excludedPlaylists Array of playlist names to exclude
  * @returns Number of songs updated
  */
 export async function markSongsAsDownloadedBeforeDate(
   request: Request,
   beforeDate: string,
-  onlyMyPlaylists: boolean = false
+  onlyMyPlaylists: boolean = false,
+  excludedPlaylists: string[] = []
 ): Promise<number> {
   const db = await getDb();
   
@@ -201,8 +203,8 @@ export async function markSongsAsDownloadedBeforeDate(
     let query = "UPDATE song SET downloaded = 1 WHERE user_id = ? AND platform_added_at < ? AND downloaded = 0";
     const params: (string | number)[] = [userId, beforeDate];
     
-    // If filtering by user's playlists, we need to join with song_playlist and playlist tables
-    if (onlyMyPlaylists) {
+    // If filtering by user's playlists or excluding playlists, we need to join with song_playlist and playlist tables
+    if (onlyMyPlaylists || excludedPlaylists.length > 0) {
       // We need to use a subquery to identify songs that are in playlists owned by the user
       query = `
         UPDATE song 
@@ -215,40 +217,70 @@ export async function markSongsAsDownloadedBeforeDate(
           FROM song s
           JOIN song_playlist sp ON s.id = sp.song_id
           JOIN playlist p ON sp.playlist_id = p.id
-          WHERE s.user_id = ?
-          AND (`;
+          WHERE s.user_id = ?`;
       
-      const ownerConditions = [];
-      const ownerParams = [];
+      params.push(userId);
       
-      if (spotifySession?.email) {
-        ownerConditions.push('p.owner_id = ?');
-        ownerParams.push(spotifySession.email);
-        // Also check for username without domain
-        const emailParts = spotifySession.email.split('@');
-        const usernameOnly = emailParts[0];
-        ownerConditions.push('p.owner_id = ?');
-        ownerParams.push(usernameOnly);
+      // Add owner conditions if filtering by user's playlists
+      if (onlyMyPlaylists) {
+        query += " AND (";
+        
+        const ownerConditions = [];
+        const ownerParams = [];
+        
+        if (spotifySession?.email) {
+          ownerConditions.push('p.owner_id = ?');
+          ownerParams.push(spotifySession.email);
+          // Also check for username without domain
+          const emailParts = spotifySession.email.split('@');
+          const usernameOnly = emailParts[0];
+          ownerConditions.push('p.owner_id = ?');
+          ownerParams.push(usernameOnly);
+        }
+        
+        if (youtubeSession?.email) {
+          ownerConditions.push('p.owner_id = ?');
+          ownerParams.push(youtubeSession.email);
+          // Also check for username without domain
+          const emailParts = youtubeSession.email.split('@');
+          const usernameOnly = emailParts[0];
+          ownerConditions.push('p.owner_id = ?');
+          ownerParams.push(usernameOnly);
+        }
+        
+        query += ownerConditions.join(' OR ') + ')';
+        params.push(...ownerParams);
       }
       
-      if (youtubeSession?.email) {
-        ownerConditions.push('p.owner_id = ?');
-        ownerParams.push(youtubeSession.email);
-        // Also check for username without domain
-        const emailParts = youtubeSession.email.split('@');
-        const usernameOnly = emailParts[0];
-        ownerConditions.push('p.owner_id = ?');
-        ownerParams.push(usernameOnly);
+      // Add excluded playlists condition
+      if (excludedPlaylists.length > 0) {
+        query += `
+          AND NOT (
+            s.id IN (
+              SELECT DISTINCT sp1.song_id 
+              FROM song_playlist sp1 
+              JOIN playlist p1 ON sp1.playlist_id = p1.id 
+              WHERE p1.name IN (${excludedPlaylists.map(() => '?').join(',')})
+            )
+            AND s.id NOT IN (
+              SELECT DISTINCT sp2.song_id 
+              FROM song_playlist sp2 
+              JOIN playlist p2 ON sp2.playlist_id = p2.id 
+              WHERE p2.name NOT IN (${excludedPlaylists.map(() => '?').join(',')})
+            )
+          )
+        `;
+        
+        // Add the excluded playlist names twice (once for each subquery)
+        params.push(...excludedPlaylists, ...excludedPlaylists);
       }
       
-      query += ownerConditions.join(' OR ') + '))';
-      params.push(userId, ...ownerParams);
+      query += ')';
     }
     
     // Execute the update query
     const result = await db.run(query, params);
     
-    // Return the number of rows affected
     return result.changes || 0;
   } catch (error) {
     console.error("Error marking songs as downloaded:", error);
@@ -307,6 +339,7 @@ export async function getUserSongsFromDB(
     sortBy?: string;
     sortDirection?: 'asc' | 'desc';
     onlyMyPlaylists?: boolean;
+    excludedPlaylists?: string[];
   } = {}
 ) {
   const db = await getDb();
@@ -333,7 +366,8 @@ export async function getUserSongsFromDB(
     songStatus = '',
     sortBy = 'platform_added_at',
     sortDirection = 'desc',
-    onlyMyPlaylists = false
+    onlyMyPlaylists = false,
+    excludedPlaylists = []
   } = options;
 
   const offset = (page - 1) * itemsPerPage;
@@ -353,20 +387,20 @@ export async function getUserSongsFromDB(
     console.error("Error getting user ID:", error);
     throw new Error("Failed to get user ID");
   }
+  
   // Build the base query
   let baseQuery = 'FROM song s';
   const countQuery = 'SELECT COUNT(DISTINCT s.id) as total';
   const selectQuery = 'SELECT DISTINCT s.*';
 
   // Join with song_playlist and playlist tables if playlist filter is applied or if filtering by user's playlists
-  if (playlist || onlyMyPlaylists) {
+  if (playlist || onlyMyPlaylists || excludedPlaylists.length > 0) {
     baseQuery += ' JOIN song_playlist sp ON s.id = sp.song_id JOIN playlist p ON sp.playlist_id = p.id';
   }
 
   // Build the WHERE clause dynamically
   const whereConditions = [];
   const params: Array<string | number> = [];
-
 
   whereConditions.push('s.user_id = ?');
   params.push(userId);
@@ -414,8 +448,31 @@ export async function getUserSongsFromDB(
       whereConditions.push(`(${ownerIds.join(' OR ')})`);
       params.push(...ownerParams);
     }
+  }
 
-
+  // Exclude songs that are only in excluded playlists
+  if (excludedPlaylists.length > 0) {
+    // This complex subquery ensures we only exclude songs that ONLY exist in excluded playlists
+    // If a song is in both an excluded playlist and a non-excluded playlist, it will still be shown
+    whereConditions.push(`
+      NOT (
+        s.id IN (
+          SELECT DISTINCT sp1.song_id 
+          FROM song_playlist sp1 
+          JOIN playlist p1 ON sp1.playlist_id = p1.id 
+          WHERE p1.name IN (${excludedPlaylists.map(() => '?').join(',')})
+        )
+        AND s.id NOT IN (
+          SELECT DISTINCT sp2.song_id 
+          FROM song_playlist sp2 
+          JOIN playlist p2 ON sp2.playlist_id = p2.id 
+          WHERE p2.name NOT IN (${excludedPlaylists.map(() => '?').join(',')})
+        )
+      )
+    `);
+    
+    // Add the excluded playlist names twice (once for each subquery)
+    params.push(...excludedPlaylists, ...excludedPlaylists);
   }
 
   if (songStatus) {
@@ -952,10 +1009,11 @@ export async function getAllPlaylists(userEmail: string, platform: string) {
       [userId]
     );
 
-    // Extract playlist names
-    const playlistNames = playlists.map(p => p.name);
-
-    return playlistNames;
+    // Return playlist objects with name and platform
+    return playlists.map(p => ({
+      name: p.name,
+      platform: p.platform
+    }));
   } catch (error) {
     console.error("Error getting all playlists:", error);
     return [];
@@ -981,7 +1039,7 @@ export async function getFilters(request: Request) {
     }
 
     let platforms: string[] = [];
-    let playlists: string[] = [];
+    let playlists: { name: string, platform: string }[] = [];
 
     // Get platforms and playlists for Spotify user
     if (spotifyEmail) {
@@ -997,11 +1055,17 @@ export async function getFilters(request: Request) {
 
     // Remove duplicates
     const uniquePlatforms = [...new Set(platforms)];
-    const uniquePlaylists = [...new Set(playlists)];
+    
+    // For playlists, we need to deduplicate based on name
+    const playlistMap = new Map<string, { name: string, platform: string }>();
+    playlists.forEach(playlist => {
+      playlistMap.set(playlist.name, playlist);
+    });
+    const uniquePlaylists = Array.from(playlistMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 
     return {
       platforms: uniquePlatforms,
-      playlists: uniquePlaylists.sort()
+      playlists: uniquePlaylists
     };
   } catch (error) {
     console.error("Error fetching filters:", error);
@@ -1879,6 +1943,7 @@ export async function getAllSongIdsWithFilter(
     playlist?: string;
     songStatus?: string;
     onlyMyPlaylists?: boolean;
+    excludedPlaylists?: string[];
   } = {}
 ) {
   const db = await getDb();
@@ -1901,7 +1966,8 @@ export async function getAllSongIdsWithFilter(
     platform = '',
     playlist = '',
     songStatus = '',
-    onlyMyPlaylists = false
+    onlyMyPlaylists = false,
+    excludedPlaylists = []
   } = options;
 
   // Get the user ID from either spotify or youtube email
@@ -1925,7 +1991,7 @@ export async function getAllSongIdsWithFilter(
   const selectQuery = 'SELECT DISTINCT s.id';
 
   // Join with song_playlist and playlist tables if playlist filter is applied or if filtering by user's playlists
-  if (playlist || onlyMyPlaylists) {
+  if (playlist || onlyMyPlaylists || excludedPlaylists.length > 0) {
     baseQuery += ' JOIN song_playlist sp ON s.id = sp.song_id JOIN playlist p ON sp.playlist_id = p.id';
   }
 
@@ -1979,6 +2045,31 @@ export async function getAllSongIdsWithFilter(
       whereConditions.push(`(${ownerIds.join(' OR ')})`);
       params.push(...ownerParams);
     }
+  }
+
+  // Exclude songs that are only in excluded playlists
+  if (excludedPlaylists.length > 0) {
+    // This complex subquery ensures we only exclude songs that ONLY exist in excluded playlists
+    // If a song is in both an excluded playlist and a non-excluded playlist, it will still be shown
+    whereConditions.push(`
+      NOT (
+        s.id IN (
+          SELECT DISTINCT sp1.song_id 
+          FROM song_playlist sp1 
+          JOIN playlist p1 ON sp1.playlist_id = p1.id 
+          WHERE p1.name IN (${excludedPlaylists.map(() => '?').join(',')})
+        )
+        AND s.id NOT IN (
+          SELECT DISTINCT sp2.song_id 
+          FROM song_playlist sp2 
+          JOIN playlist p2 ON sp2.playlist_id = p2.id 
+          WHERE p2.name NOT IN (${excludedPlaylists.map(() => '?').join(',')})
+        )
+      )
+    `);
+    
+    // Add the excluded playlist names twice (once for each subquery)
+    params.push(...excludedPlaylists, ...excludedPlaylists);
   }
 
   if (songStatus) {

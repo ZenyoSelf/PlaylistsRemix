@@ -53,8 +53,9 @@ export const cleanupQueue = new Queue('cleanup-queue', {
 // Process cleanup jobs
 cleanupQueue.process(async () => {
   console.log('Running cleanup job...');
+  console.log('NOT ACTIVATED...');
   try {
-    await cleanupOldFiles();
+   // await cleanupOldFiles();
     return { success: true };
   } catch (error) {
     console.error('Error during cleanup:', error);
