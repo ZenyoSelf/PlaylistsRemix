@@ -9,14 +9,15 @@ import {
 } from "~/components/ui/popover";
 
 interface DownloadJob {
-  id: string;
+  id: string | number;
   songName: string;
   progress: number;
-  status: 'queued' | 'downloading' | 'completed' | 'error' | 'usercancelled';
-  error?: string;
+  status: 'queued' | 'downloading' | 'completed' | 'error' | 'cancelled' | 'usercancelled';
   filePath?: string;
+  error?: string;
   isBulk?: boolean;
   errorTime?: number;
+  infoMessages?: { message: string; error?: string; time: number }[];
 }
 
 export function DownloadManager({ userId }: { userId: string }) {
@@ -47,28 +48,20 @@ export function DownloadManager({ userId }: { userId: string }) {
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log(`Received event for job ${data.jobId}:`, data);
+        console.log('SSE event received:', data);
         
         if (data.type === 'queued') {
-          setJobs(prevJobs => {
-            // Don't add duplicate jobs
-            if (prevJobs.some(job => job.id === data.jobId)) {
-              return prevJobs;
+          // Add new job to the list
+          setJobs(prevJobs => [
+            ...prevJobs.filter(job => job.id !== data.jobId), // Remove if already exists
+            { 
+              id: data.jobId, 
+              progress: 0, 
+              status: 'queued', 
+              songName: data.songName || 'Unknown',
+              isBulk: data.isBulk === true || data.jobId.toString().startsWith('bulk-') || data.songName.includes('Bulk download')
             }
-            
-            // Check if this is a bulk download
-            const isBulk = data.jobId.toString().startsWith('bulk-') || 
-                          data.songName.includes('Bulk download') ||
-                          data.isBulk === true;
-            
-            return [...prevJobs, {
-              id: data.jobId,
-              songName: data.songName,
-              progress: 0,
-              status: 'queued',
-              isBulk
-            }];
-          });
+          ]);
         } else if (data.type === 'progress') {
           setJobs(prevJobs => 
             prevJobs.map(job => 
@@ -109,6 +102,29 @@ export function DownloadManager({ userId }: { userId: string }) {
                     songName: data.songName || job.songName,
                     isBulk: job.isBulk || data.isBulk === true || data.jobId.toString().startsWith('bulk-') || data.songName.includes('Bulk download'),
                     errorTime: Date.now()
+                  } 
+                : job
+            )
+          );
+        } else if (data.type === 'info') {
+          // For info messages, we don't update the job status but we can show a toast or log
+          console.log(`Info for job ${data.jobId}: ${data.songName}${data.error ? ` - ${data.error}` : ''}`);
+          
+          // Optionally, you could update the job with additional info
+          setJobs(prevJobs => 
+            prevJobs.map(job => 
+              job.id === data.jobId 
+                ? { 
+                    ...job,
+                    // Add info messages to an array on the job
+                    infoMessages: [
+                      ...(job.infoMessages || []),
+                      {
+                        message: data.songName,
+                        error: data.error,
+                        time: Date.now()
+                      }
+                    ]
                   } 
                 : job
             )
@@ -202,12 +218,12 @@ export function DownloadManager({ userId }: { userId: string }) {
     }
   };
 
-  const handleDownload = async (jobId: string, isBulk: boolean = false) => {
+  const handleDownload = async (jobId: string | number, isBulk: boolean = false) => {
     try {
       // Use different endpoint for bulk downloads
       const endpoint = isBulk 
-        ? `/api/bulk-download/${jobId}`
-        : `/api/download/${jobId}`;
+        ? `/api/bulk-download/${String(jobId)}`
+        : `/api/download/${String(jobId)}`;
         
       const response = await fetch(endpoint);
       if (!response.ok) throw new Error('Download failed');
@@ -232,42 +248,15 @@ export function DownloadManager({ userId }: { userId: string }) {
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
-      a.remove();
-
-      // Remove the completed job from the list
-      setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
+      document.body.removeChild(a);
     } catch (error) {
-      console.error('Download error:', error);
+      console.error('Error downloading file:', error);
+      alert('Failed to download file. Please try again.');
     }
   };
 
-  const removeJob = async (jobId: string) => {
-    try {
-      // First, mark the job as cancelled in the UI
-      setJobs(prevJobs => prevJobs.map(job => 
-        job.id === jobId 
-          ? { ...job, status: 'usercancelled' } 
-          : job
-      ));
-
-      // Then, send a request to cancel the job on the server
-      const response = await fetch(`/api/cancel-job/${jobId}?userId=${userId}`, {
-        method: 'POST',
-      });
-
-      if (!response.ok) {
-        console.error('Failed to cancel job on server');
-      }
-
-      // Finally, remove the job from the UI after a short delay
-      setTimeout(() => {
-        setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
-      }, 500);
-    } catch (error) {
-      console.error('Error cancelling job:', error);
-      // If there's an error, still remove the job from the UI
-      setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
-    }
+  const removeJob = async (jobId: string | number) => {
+    setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
   };
 
   const getStatusIcon = (job: DownloadJob) => {

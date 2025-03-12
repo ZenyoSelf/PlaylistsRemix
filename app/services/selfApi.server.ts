@@ -224,17 +224,23 @@ function normalizeFilename(name: string): string {
 }
 
 function findMatchingFile(files: string[], trackName: string, artists: string[]): string | undefined {
+  console.log(`Finding matching file for: "${trackName}" by "${artists.join(', ')}"`);
+  console.log(`Available files: ${JSON.stringify(files)}`);
+  
   // Create variations of the expected filename
   const variations = [
     `${artists.join(",")} - ${trackName}`, // Original format
     trackName,                             // Just the track name
     normalizeFilename(`${artists.join(",")} - ${trackName}`), // Normalized version
   ];
+  
+  console.log(`Filename variations to search for: ${JSON.stringify(variations)}`);
 
   // Try exact matches first
   for (const file of files) {
     const fileWithoutExt = path.parse(file).name;
     if (variations.includes(fileWithoutExt)) {
+      console.log(`Found exact match: "${file}"`);
       return file;
     }
   }
@@ -252,10 +258,49 @@ function findMatchingFile(files: string[], trackName: string, artists: string[])
       file.normalized.includes(normalized) || normalized.includes(file.normalized)
     );
     if (match) {
+      console.log(`Found normalized match: "${match.original}" for "${variation}"`);
       return match.original;
     }
   }
-
+  
+  // Try matching by keywords
+  const keywords = normalizeFilename(trackName).split(' ').filter(word => word.length > 2);
+  if (keywords.length > 0) {
+    console.log(`Trying keyword matching with: ${JSON.stringify(keywords)}`);
+    
+    // Find files that contain most of the keywords
+    const keywordMatches = normalizedFiles.map(file => ({
+      file: file.original,
+      matchCount: keywords.filter(keyword => file.normalized.includes(keyword)).length,
+      matchRatio: keywords.filter(keyword => file.normalized.includes(keyword)).length / keywords.length
+    }))
+    .filter(match => match.matchRatio > 0.5) // At least 50% of keywords match
+    .sort((a, b) => b.matchRatio - a.matchRatio); // Sort by match ratio descending
+    
+    if (keywordMatches.length > 0) {
+      console.log(`Found keyword match: "${keywordMatches[0].file}" with match ratio ${keywordMatches[0].matchRatio}`);
+      return keywordMatches[0].file;
+    }
+  }
+  
+  // If we still haven't found a match, try a more lenient approach
+  // Just check if any file contains the first few characters of the track name
+  if (trackName.length > 5) {
+    const trackStart = normalizeFilename(trackName.substring(0, 5));
+    const startMatch = normalizedFiles.find(file => file.normalized.includes(trackStart));
+    if (startMatch) {
+      console.log(`Found partial match by track name start: "${startMatch.original}"`);
+      return startMatch.original;
+    }
+  }
+  
+  // If all else fails, just return the first file if there's only one
+  if (files.length === 1) {
+    console.log(`No match found, but only one file exists. Using: "${files[0]}"`);
+    return files[0];
+  }
+  
+  console.log(`No matching file found for: "${trackName}" by "${artists.join(', ')}"`);
   return undefined;
 }
 
@@ -266,6 +311,8 @@ export async function downloadSpotifySong(
   userId: string
 ): Promise<string> {
   try {
+    console.log(`Starting download for: "${trackName}" by "${artists.join(", ")}" to playlist "${playlistName}"`);
+    
     const song = await convertSpotifyToYouTubeMusic(trackName, artists);
 
     if (!song) {
@@ -279,47 +326,108 @@ export async function downloadSpotifySong(
 
     // Store original filename for Content-Disposition
     const originalFilename = `${artists.join(",")} - ${trackName}`;
+    
+    console.log(`Executing yt-dlp for: ${song.toString()}`);
+    
+    // For bulk downloads, use a different output template to preserve more of the original YouTube title
+    // This helps with matching files later
+    const isBulkDownload = playlistName === 'bulk';
+    const outputTemplate = isBulkDownload
+      ? `"NA - %(title)s.%(ext)s"` // Prefix with NA to identify files from YouTube
+      : `"%(artist)s - %(title)s.%(ext)s"`; // Standard format for regular downloads
+    
+    const ytDlpCommand = [
+      song.toString(),
+      "-f", "bestaudio",
+      "-x",
+      "--audio-format", "flac",
+      "--audio-quality", "0",
+      "--add-metadata",
+      "--embed-thumbnail",
+      "-o", outputTemplate,
+      "-P", `"${outputDir}"`,
+      "--windows-filenames",
+      "--ffmpeg-location", path.dirname(ffmpegPath),
+      "--no-mtime",
+    ];
+    
+    console.log(`yt-dlp command: ${ytDlpPath} ${ytDlpCommand.join(' ')}`);
 
     await new Promise((resolve, reject) => {
       execFile(
         ytDlpPath,
-        [
-          song.toString(),
-          "-f", "bestaudio",
-          "-x",
-          "--audio-format", "flac",
-          "--audio-quality", "0",
-          "--add-metadata",
-          "--embed-thumbnail",
-          "-o", `"%(artist)s - %(title)s.%(ext)s"`,
-          "-P", `"${outputDir}"`,
-          "--windows-filenames",
-          "--ffmpeg-location", path.dirname(ffmpegPath),
-          "--no-mtime",
-        ],
+        ytDlpCommand,
         {
           env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
           shell: true
         },
-        (error, stdout) => {
-          if (error) reject(error);
-          else resolve(stdout);
+        (error, stdout, stderr) => {
+          if (error) {
+            console.error(`yt-dlp error: ${error.message}`);
+            console.error(`yt-dlp stderr: ${stderr}`);
+            reject(error);
+          } else {
+            console.log(`yt-dlp stdout: ${stdout}`);
+            resolve(stdout);
+          }
         }
       );
     });
 
-    // Get the downloaded file path
-    const files = await fs.readdir(outputDir);
-    if (files.length === 0) throw new Error("No file was downloaded");
+    // Add a delay to ensure file system operations are complete
+    console.log(`Download completed, waiting for file system...`);
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
-    console.log("Available files:", files);
-    console.log("Looking for track:", trackName);
+    // Get the downloaded file path with retry logic
+    let files: string[] = [];
+    let retryCount = 0;
+    const maxRetries = 3;
     
-    const downloadedFile = findMatchingFile(files, trackName, artists);
-    if (!downloadedFile) throw new Error("Could not find downloaded file");
+    while (retryCount < maxRetries) {
+      try {
+        files = await fs.readdir(outputDir);
+        if (files.length > 0) break;
+        
+        console.log(`No files found in ${outputDir}, retrying (${retryCount + 1}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+        retryCount++;
+      } catch (error) {
+        console.error(`Error reading directory ${outputDir}:`, error);
+        if (retryCount >= maxRetries - 1) throw error;
+        retryCount++;
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+      }
+    }
+    
+    if (files.length === 0) throw new Error(`No file was downloaded to ${outputDir} after ${maxRetries} attempts`);
+
+    console.log(`Found ${files.length} files in directory: ${outputDir}`);
+    console.log(`Available files:`, files);
+    console.log(`Looking for track: "${trackName}" by "${artists.join(', ')}"`);
+    
+    // Try to find the downloaded file with retry logic
+    let downloadedFile;
+    retryCount = 0;
+    
+    while (retryCount < maxRetries && !downloadedFile) {
+      downloadedFile = findMatchingFile(files, trackName, artists);
+      if (downloadedFile) break;
+      
+      console.log(`File not found, retrying with delay (${retryCount + 1}/${maxRetries})...`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Refresh the file list in case the file was still being written
+      files = await fs.readdir(outputDir);
+      retryCount++;
+    }
+    
+    if (!downloadedFile) {
+      throw new Error(`Could not find downloaded file for "${trackName}" by "${artists.join(', ')}" in ${outputDir}`);
+    }
 
     const filePath = path.join(outputDir, downloadedFile);
-    console.log("File found:", filePath);
+    console.log(`File found: ${filePath}`);
+    
     // Return both the file path and original filename
     return JSON.stringify({
       path: filePath,
@@ -327,7 +435,7 @@ export async function downloadSpotifySong(
     });
 
   } catch (error) {
-    console.error("Download process error:", error);
+    console.error(`Download process error for "${trackName}" by "${artists.join(', ')}":`, error);
     throw error;
   }
 }

@@ -14,13 +14,15 @@ interface DownloadJobData {
   bulkSongIds?: string[];
   songName?: string;
   zipPath?: string;
+  successCount?: number;
+  failCount?: number;
 }
 
 // Map to store event sources for each user
 const eventSources = new Map<string, Set<(data: ProgressData) => void>>();
 
 interface ProgressData {
-  type: 'progress' | 'complete' | 'error' | 'queued' | 'usercancelled';
+  type: 'progress' | 'complete' | 'error' | 'queued' | 'usercancelled' | 'info';
   progress?: number;
   jobId: string | number;
   songName: string;
@@ -187,6 +189,8 @@ async function processBulkDownload(job: Job<DownloadJobData>) {
     // Filter songs that are already downloaded
     const songs = await getSongsByIds(bulkSongIds);
     const totalSongs = songs.length;
+    
+    console.log(`Starting bulk download of ${totalSongs} songs for user ${userId}`);
 
     // Use a consistent "bulk" folder for all bulk downloads
     const bulkFolderName = "bulk";
@@ -195,10 +199,15 @@ async function processBulkDownload(job: Job<DownloadJobData>) {
     const bulkDir = path.join(process.cwd(), "tmp", userId, bulkFolderName);
     try {
       await fs.mkdir(bulkDir, { recursive: true });
+      console.log(`Created bulk directory: ${bulkDir}`);
     } catch (error) {
       console.error(`Error creating bulk directory: ${bulkDir}`, error);
       throw error;
     }
+    
+    // Track successful and failed downloads
+    const successfulDownloads: number[] = [];
+    const failedDownloads: { id: number; title: string; error: string }[] = [];
     
     // Process songs that need to be downloaded
     for (let treatedSongs = 0; treatedSongs < songs.length; treatedSongs++) {
@@ -228,15 +237,35 @@ async function processBulkDownload(job: Job<DownloadJobData>) {
           artists = artistString.split(',').map((a: string) => a.trim()).filter(Boolean);
         }
 
+        console.log(`Processing song ${treatedSongs + 1}/${totalSongs}: "${song.title}" by "${artists.join(', ')}"`);
+
         // Download the song to the bulk folder
         await downloadSpotifySong(song.title || 'Unknown', artists, bulkFolderName, userId);
 
-        // Update song status in database
-        await updateSongDownloadStatus(song.id.toString(), true);
-        await updateSongLocalStatus(song.id.toString(), true);
+        // Track successful download - but don't update DB status yet
+        // We'll update the status after confirming the file is in the zip
+        successfulDownloads.push(song.id);
+        console.log(`Successfully downloaded song: "${song.title}" by "${artists.join(', ')}"`);
 
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`Error downloading song ${song.title}:`, error);
+        
+        // Track failed download
+        failedDownloads.push({
+          id: song.id,
+          title: song.title || 'Unknown',
+          error: errorMessage
+        });
+        
+        // Emit error for this specific song but continue with the bulk process
+        emitProgress(userId, {
+          type: 'info',
+          jobId: job.id,
+          songName: `Failed to download: ${song.title || 'Unknown'}`,
+          error: errorMessage,
+          isBulk: true
+        });
       }
     }
 
@@ -245,43 +274,124 @@ async function processBulkDownload(job: Job<DownloadJobData>) {
       type: 'progress',
       progress: 90,
       jobId: job.id,
-      songName: `Preparing to create zip file with ${songs.length} songs`,
+      songName: `Preparing to create zip file with ${successfulDownloads.length} songs (${failedDownloads.length} failed)`,
       isBulk: true
     });
     
     // Update job progress to 90%
     await job.progress(90);
 
-    // Use the job ID as the zip file name
-    // The zipService will now emit its own progress events during the zipping process
-    const zipPath = await createZipFromSongs(songs, userId, job.id.toString());
+    // Only create a zip if there are successful downloads
+    let zipPath = '';
+    let includedInZip: number[] = [];
+    
+    if (successfulDownloads.length > 0) {
+      try {
+        // Use the job ID as the zip file name
+        // The zipService will now emit its own progress events during the zipping process
+        zipPath = await createZipFromSongs(songs, userId, job.id.toString());
+        console.log(`Created zip file: ${zipPath}`);
+        
+        // Get the list of songs that were actually included in the zip
+        // This is important because some songs might be downloaded but not included in the zip
+        // due to file matching issues
+        
+        // Read the metadata file to check which songs were included
+        const metadataPath = path.join(process.cwd(), "tmp", userId, `${job.id.toString()}.meta.json`);
+        try {
+          const metadataContent = await fs.readFile(metadataPath, 'utf-8');
+          const metadata = JSON.parse(metadataContent);
+          
+          if (metadata && Array.isArray(metadata.includedSongIds)) {
+            includedInZip = metadata.includedSongIds;
+            console.log(`Read ${includedInZip.length} included song IDs from metadata file`);
+          } else {
+            console.warn(`Metadata file exists but has invalid format, falling back to successfulDownloads`);
+            includedInZip = successfulDownloads;
+          }
+        } catch (metadataError: unknown) {
+          const errorMessage = metadataError instanceof Error ? metadataError.message : String(metadataError);
+          console.warn(`Could not read metadata file: ${errorMessage}, falling back to successfulDownloads`);
+          includedInZip = successfulDownloads;
+        }
+        
+        // Update the database status only for songs that were actually included in the zip
+        for (const songId of includedInZip) {
+          await updateSongDownloadStatus(songId.toString(), true);
+          await updateSongLocalStatus(songId.toString(), true);
+          console.log(`Updated database status for song ID ${songId}`);
+        }
+        
+        // Add songs that were downloaded but not included in the zip to the failed list
+        const notIncluded = successfulDownloads.filter(id => !includedInZip.includes(id));
+        for (const songId of notIncluded) {
+          const song = songs.find(s => s.id === songId);
+          if (song) {
+            failedDownloads.push({
+              id: songId,
+              title: song.title || 'Unknown',
+              error: 'Downloaded but not included in zip file'
+            });
+            console.log(`Song ID ${songId} was downloaded but not included in zip`);
+          }
+        }
+      } catch (error) {
+        console.error(`Error creating zip file:`, error);
+        // If zip creation fails, mark all songs as failed
+        for (const songId of successfulDownloads) {
+          const song = songs.find(s => s.id === songId);
+          if (song) {
+            failedDownloads.push({
+              id: songId,
+              title: song.title || 'Unknown',
+              error: 'Failed to include in zip file'
+            });
+          }
+        }
+        throw error;
+      }
+    } else {
+      console.error(`No songs were successfully downloaded for bulk job ${job.id}`);
+      throw new Error(`All ${songs.length} songs failed to download`);
+    }
 
-    // We don't need to emit progress here as the zipService will emit a 100% progress event
-    // when the zip is complete. We only need to emit the completion event.
-
-    // Emit completion with job info
+    // Emit completion with job info and summary of failed downloads
     emitProgress(userId, {
       type: 'complete',
       jobId: job.id,
-      songName: `Bulk download (${songs.length} songs)`,
+      songName: `Bulk download completed: ${includedInZip.length} songs included in zip, ${failedDownloads.length} failed`,
       filePath: path.basename(zipPath),
       isBulk: true
     });
 
+    // If there were failed downloads, emit a summary
+    if (failedDownloads.length > 0) {
+      emitProgress(userId, {
+        type: 'info',
+        jobId: job.id,
+        songName: `${failedDownloads.length} songs failed to download or include in zip`,
+        error: `Failed songs: ${failedDownloads.map(f => f.title).join(', ')}`,
+        isBulk: true
+      });
+    }
+
     // Set job progress to 100% to mark it as completed
     await job.progress(100);
     
-    // Update job data to include the zip path
+    // Update job data to include the zip path and download statistics
     await job.update({
       ...job.data,
-      zipPath: path.basename(zipPath)
+      zipPath: path.basename(zipPath),
+      successCount: includedInZip.length,
+      failCount: failedDownloads.length
     });
 
     return {
       status: 'completed',
       filePath: path.basename(zipPath),
       userId,
-      songCount: songs.length
+      songCount: includedInZip.length,
+      failedCount: failedDownloads.length
     };
   } catch (error) {
     console.error(`Error processing bulk download:`, error);
