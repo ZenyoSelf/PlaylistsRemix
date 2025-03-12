@@ -56,16 +56,16 @@ export default function Dashboard() {
         
         <Card>
           <CardHeader>
-            <CardTitle>Updates</CardTitle>
+            <CardTitle>Library</CardTitle>
             <CardDescription>
               View and manage all your songs from different platforms
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Link to="/updates">
+            <Link to="/library">
               <Button className="w-full" variant="outline">
                 <RefreshCw className="mr-2 h-4 w-4" />
-                Go to Updates
+                Go to Library
               </Button>
             </Link>
           </CardContent>

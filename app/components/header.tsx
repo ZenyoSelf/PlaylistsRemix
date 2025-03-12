@@ -6,7 +6,7 @@ import {
 import { Link, Form } from "@remix-run/react";
 import styles from "~/global.css?url";
 import { LinksFunction } from "@remix-run/node";
-import { Music, Link as LinkIcon, Download, UserCircle, LogOut } from "lucide-react";
+import { Music, Link as LinkIcon, Download, UserCircle, LogOut, Plus } from "lucide-react";
 import { DownloadManager } from "./DownloadManager";
 import { Button } from "./ui/button";
 
@@ -39,11 +39,21 @@ export default function Header({ userId }: HeaderProps) {
             <NavigationMenuList className="hidden md:flex gap-1">
               <NavigationMenuItem>
                 <Link
-                  to="/updates"
+                  to="/library"
                   className="group inline-flex h-9 w-max items-center justify-center rounded-md bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[active]:bg-accent/50 data-[state=open]:bg-accent/50"
                 >
                   <Download className="mr-2 h-4 w-4" />
-                  Download Manager
+                  Library
+                </Link>
+              </NavigationMenuItem>
+              
+              <NavigationMenuItem>
+                <Link
+                  to="/new-additions"
+                  className="group inline-flex h-9 w-max items-center justify-center rounded-md bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[active]:bg-accent/50 data-[state=open]:bg-accent/50"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  New Additions
                 </Link>
               </NavigationMenuItem>
               
@@ -84,8 +94,13 @@ export default function Header({ userId }: HeaderProps) {
             {/* Mobile Navigation */}
             <div className="md:hidden flex gap-2">
               <Button variant="ghost" size="icon" asChild>
-                <Link to="/updates">
+                <Link to="/library">
                   <Download className="h-5 w-5" />
+                </Link>
+              </Button>
+              <Button variant="ghost" size="icon" asChild>
+                <Link to="/new-additions">
+                  <Plus className="h-5 w-5" />
                 </Link>
               </Button>
               <Button variant="ghost" size="icon" asChild>
