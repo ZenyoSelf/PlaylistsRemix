@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { ActionFunctionArgs, json } from "@remix-run/node";
 import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { useEffect, useState } from "react";
 import { Button } from "~/components/ui/button";
@@ -32,7 +32,7 @@ export async function loader() {
   });
 }
 
-export async function action({ request }) {
+export async function action({ request }: ActionFunctionArgs) {
   // Try to get session from both providers
   const spotifySession = await getProviderSession(request, "spotify");
   const youtubeSession = await getProviderSession(request, "youtube");
@@ -58,14 +58,14 @@ export async function action({ request }) {
 
   try {
     // Extract metadata from the URL
-    const metadata = await getMetadataFromUrl(url);
+    const metadata = await getMetadataFromUrl(url as string);
     
     // Determine the platform - use the detected platform or "CustomURL" if unknown
     const platform = metadata.platform || "CustomURL";
     
     // Save the song to the database
     const songId = await saveCustomUrlSong(
-      url,
+      url as string,
       metadata.title,
       metadata.artist,
       metadata.thumbnailUrl,
@@ -108,7 +108,7 @@ export async function action({ request }) {
 }
 
 export default function CustomUrlRoute() {
-  const { supportedSites } = useLoaderData();
+  const { supportedSites } = useLoaderData<typeof loader>();
   const actionData = useActionData();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";

@@ -26,7 +26,7 @@ export async function convertSpotifyToYouTubeMusic(
           "--no-warnings",
           "--extractor-args", "youtube:player_client=android"
         ],
-        (error, stdout, stderr) => {
+        (error, stdout) => {
           if (error) reject(error);
           else resolve(stdout.trim());
         }
