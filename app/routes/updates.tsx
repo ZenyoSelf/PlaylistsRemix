@@ -34,7 +34,7 @@ interface LoaderData {
   totalPages: number;
   total: number;
   platforms: string[];
-  playlists: string[];
+  playlists: { name: string, platform: string }[];
   lastRefreshSpotify: string | null;
   lastRefreshYoutube: string | null;
 }
@@ -411,8 +411,8 @@ export default function Updates() {
                 <SelectContent>
                   <SelectItem value="all">All Playlists</SelectItem>
                   {playlists.map((playlist) => (
-                    <SelectItem key={playlist} value={playlist}>
-                      {playlist}
+                    <SelectItem key={`${playlist.name}-${playlist.platform}`} value={playlist.name}>
+                      {playlist.name}
                     </SelectItem>
                   ))}
                 </SelectContent>

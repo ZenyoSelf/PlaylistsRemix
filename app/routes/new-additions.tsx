@@ -579,7 +579,7 @@ export default function NewAdditions() {
                         <SelectContent className="min-w-[200px] max-h-[300px]">
                           <SelectItem value="all">All Playlists</SelectItem>
                           {playlists.map((playlist) => (
-                            <SelectItem key={playlist.name} value={playlist.name}>
+                            <SelectItem key={`${playlist.name}-${playlist.platform}`} value={playlist.name}>
                               {playlist.name}
                             </SelectItem>
                           ))}

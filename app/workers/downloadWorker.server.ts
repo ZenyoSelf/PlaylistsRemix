@@ -245,7 +245,7 @@ async function processBulkDownload(job: Job<DownloadJobData>) {
       type: 'progress',
       progress: 90,
       jobId: job.id,
-      songName: `Creating zip file with ${songs.length} songs`,
+      songName: `Preparing to create zip file with ${songs.length} songs`,
       isBulk: true
     });
     
@@ -253,16 +253,11 @@ async function processBulkDownload(job: Job<DownloadJobData>) {
     await job.progress(90);
 
     // Use the job ID as the zip file name
+    // The zipService will now emit its own progress events during the zipping process
     const zipPath = await createZipFromSongs(songs, userId, job.id.toString());
 
-    // Update progress to 100% with job info
-    emitProgress(userId, {
-      type: 'progress',
-      progress: 100,
-      jobId: job.id,
-      songName: `Bulk download (${songs.length} songs) ready`,
-      isBulk: true
-    });
+    // We don't need to emit progress here as the zipService will emit a 100% progress event
+    // when the zip is complete. We only need to emit the completion event.
 
     // Emit completion with job info
     emitProgress(userId, {

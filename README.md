@@ -136,11 +136,13 @@ DONE : Add one click download for all not downloaded file (new-additions)
 Add accurate metadata to file (right artist, right album name, ...)
 
 
-REmoved the is-local api, only taken by the normal retrieval system.
+Remove the is-local api, only taken by the normal retrieval system.
 DONE : Add a tool to set which songs were downloaded (as users could have downloaded songs elsewhere, we need to add the option to set which songs have been already downloaded. )
 
-Add more options than "only my playlist", as for example "Radar des sorties" or "Découverte de la semaine" is taken into my playlist account.
+DONE : Add more options than "only my playlist", as for example "Radar des sorties" or "Découverte de la semaine" is taken into my playlist account.
 
 Add a better tracking on the zipping (logs of progress, and enhance it to be faster.)
 
 Also set the songs from batch download to download when download is done (click on button and served folder)
+
+Treat the batch download songs into sub process. (5 songs by 5 songs in 5 process) -> makes the bulk dl faster
