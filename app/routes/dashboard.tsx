@@ -1,10 +1,13 @@
-import type { MetaFunction, LoaderFunctionArgs } from "@remix-run/node";
+import type { MetaFunction, LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Link, useLoaderData } from "@remix-run/react";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Download, RefreshCw } from "lucide-react";
 import { sessionStorage } from "~/services/session.server";
+import { getUserByEmail } from "~/services/db.server";
+import { getUserPreferredFormat, setUserPreferredFormat } from "~/services/userPreferences.server";
+import FileFormatSelector from "~/components/FileFormatSelector";
 
 export const meta: MetaFunction = () => {
   return [
@@ -23,11 +26,43 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return redirect("/login");
   }
   
-  return json({ userEmail });
+  // Get user ID from email
+  const user = await getUserByEmail(userEmail);
+  if (!user) {
+    return redirect("/login");
+  }
+  
+  // Get user's preferred file format
+  const preferredFormat = await getUserPreferredFormat(user.id);
+  
+  return json({ 
+    userEmail,
+    userId: user.id,
+    preferredFormat
+  });
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  const formData = await request.formData();
+  const _action = formData.get("_action");
+  
+  if (_action === "updateFileFormat") {
+    const userId = formData.get("userId");
+    const fileFormat = formData.get("fileFormat");
+    
+    if (userId && fileFormat && typeof userId === "string" && typeof fileFormat === "string") {
+      await setUserPreferredFormat(userId, fileFormat);
+      return json({ success: true });
+    }
+    
+    return json({ success: false, error: "Invalid form data" }, { status: 400 });
+  }
+  
+  return json({ success: false, error: "Invalid action" }, { status: 400 });
 }
 
 export default function Dashboard() {
-  const { userEmail } = useLoaderData<typeof loader>();
+  const { userEmail, userId, preferredFormat } = useLoaderData<typeof loader>();
   
   return (
     <div className="container mx-auto py-8">
@@ -86,6 +121,9 @@ export default function Dashboard() {
             </Link>
           </CardContent>
         </Card>
+        
+        {/* File Format Selector */}
+        <FileFormatSelector userId={userId.toString()} currentFormat={preferredFormat} />
       </div>
     </div>
   );

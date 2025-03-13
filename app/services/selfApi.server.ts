@@ -5,6 +5,7 @@ import { convertSpotifyToYouTubeMusic } from "./spotToYt.server";
 import fs from "fs/promises";
 import { Song, SpotifyTrackItem, SpotifyTrack, SpotifyPlaylist } from "~/types/customs";
 import { getProviderSession } from "./auth.server";
+import { getUserPreferredFormat } from "./userPreferences.server";
 
 // Define interfaces for Spotify API responses
 // Removed interfaces as they are now imported from customs.ts
@@ -319,6 +320,10 @@ export async function downloadSpotifySong(
       throw new Error(`Could not find YouTube video for: ${trackName} by ${artists.join(", ")}`);
     }
 
+    // Get user's preferred format
+    const audioFormat = await getUserPreferredFormat(userId);
+    console.log(`Using audio format: ${audioFormat} for user ${userId}`);
+
     // Create the output directory with the correct structure: tmp/userId/playlistName
     const outputDir = path.join(process.cwd(), "tmp", userId, playlistName);
     console.log(`Creating output directory: ${outputDir}`);
@@ -340,7 +345,7 @@ export async function downloadSpotifySong(
       song.toString(),
       "-f", "bestaudio",
       "-x",
-      "--audio-format", "flac",
+      "--audio-format", audioFormat,
       "--audio-quality", "0",
       "--add-metadata",
       "--embed-thumbnail",

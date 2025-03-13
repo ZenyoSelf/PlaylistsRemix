@@ -2091,3 +2091,24 @@ export async function getAllSongIdsWithFilter(
   // Return just the IDs as an array of strings
   return songIds.map((row: { id: number | string }) => row.id.toString());
 }
+
+/**
+ * Get user by email address
+ * @param email User email address
+ * @returns User object or null if not found
+ */
+export async function getUserByEmail(email: string) {
+  const db = await getDb();
+  try {
+    const user = await db.get(
+      "SELECT * FROM user WHERE user_email = ?",
+      [email]
+    );
+    return user || null;
+  } catch (error) {
+    console.error("Error getting user by email:", error);
+    return null;
+  } finally {
+    await db.close();
+  }
+}

@@ -6,6 +6,7 @@ node_modules
 
 # Database files
 app/db/songs.db
+app/db/song.db
 app/db/backups/*
 app/db/migrations/*
 
@@ -22,3 +23,4 @@ app/tmp/**/**/**
 # Ignore all files and directories under tmp
 /tmp/
 /app/tmp/
+

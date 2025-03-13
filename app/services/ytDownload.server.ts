@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import { Song } from "~/types/customs";
+import { getUserPreferredFormat } from "./userPreferences.server";
 
 // Construct __dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -14,9 +15,13 @@ const ffmpegPath = path.resolve(__dirname, "../utils/ffmpeg.exe");
 export async function downloadYouTubeVideo(
   videoUrl: string,
   outputDir: string,
-  userId: string
+  userId: string,
+  format?: string
 ): Promise<string> {
   try {
+    // Get user's preferred format if not provided
+    const audioFormat = format || await getUserPreferredFormat(userId);
+    
     // Create user directory if it doesn't exist
     const userDir = path.join(outputDir, userId);
     await fs.mkdir(userDir, { recursive: true });
@@ -24,48 +29,56 @@ export async function downloadYouTubeVideo(
     // Set output template for the downloaded file
     const outputTemplate = path.join(userDir, "%(title)s.%(ext)s");
     
-    // Execute yt-dlp to download the video as audio
-    const result = await new Promise<string>((resolve, reject) => {
+    // Execute yt-dlp to download the video
+    await new Promise<void>((resolve, reject) => {
       execFile(
         ytDlpPath,
         [
           videoUrl,
-          "--extract-audio",
-          "--audio-format", "mp3",
-          "--audio-quality", "0", // Best quality
-          "--output", outputTemplate,
-          "--no-playlist",
-          "--no-warnings",
-          "--quiet"
+          "-f", "bestaudio",
+          "-x",
+          "--audio-format", audioFormat,
+          "--audio-quality", "0",
+          "--add-metadata",
+          "--embed-thumbnail",
+          "-o", `"${outputTemplate}"`,
+          "--windows-filenames",
+          "--ffmpeg-location", path.dirname(ffmpegPath),
+          "--no-mtime",
         ],
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        async (error, stdout, stderr) => {
-          if (error) {
-            reject(error);
-          } else {
-            // Get the filename from stdout or find it in the directory
-            const files = await fs.readdir(userDir);
-            // Find the most recently created file
-            const fileStat = await Promise.all(
-              files.map(async (file) => {
-                const stats = await fs.stat(path.join(userDir, file));
-                return { file, stats };
-              })
-            );
-            
-            fileStat.sort((a, b) => b.stats.mtimeMs - a.stats.mtimeMs);
-            
-            if (fileStat.length > 0) {
-              resolve(path.join(userDir, fileStat[0].file));
-            } else {
-              reject(new Error("Could not find downloaded file"));
-            }
-          }
+        {
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+          shell: true
+        },
+        (error) => {
+          if (error) reject(error);
+          else resolve();
         }
       );
     });
+
+    // Get the downloaded file path
+    const files = await fs.readdir(userDir);
+    if (files.length === 0) throw new Error("No file was downloaded");
+
+    // Get the most recently created file
+    const fileStat = await Promise.all(
+      files.map(async (file) => {
+        const stats = await fs.stat(path.join(userDir, file));
+        return { file, stats };
+      })
+    );
     
-    return result;
+    fileStat.sort((a, b) => b.stats.mtimeMs - a.stats.mtimeMs);
+    
+    if (fileStat.length === 0) {
+      throw new Error("Could not find downloaded file");
+    }
+
+    const downloadedFile = fileStat[0].file;
+    const filePath = path.join(userDir, downloadedFile);
+    
+    return filePath;
   } catch (error) {
     console.error("Error downloading YouTube video:", error);
     throw error;
@@ -100,9 +113,13 @@ export async function downloadFromCustomUrl(
   url: string,
   outputDir: string,
   userId: string,
-  playlistName: string = "custom"
+  playlistName: string = "custom",
+  format?: string
 ): Promise<{ path: string; originalName: string }> {
   try {
+    // Get user's preferred format if not provided
+    const audioFormat = format || await getUserPreferredFormat(userId);
+    
     // Create user directory if it doesn't exist
     const userDir = path.join(outputDir, userId, playlistName);
     await fs.mkdir(userDir, { recursive: true });
@@ -118,7 +135,7 @@ export async function downloadFromCustomUrl(
           url,
           "-f", "bestaudio",
           "-x",
-          "--audio-format", "flac",
+          "--audio-format", audioFormat,
           "--audio-quality", "0",
           "--add-metadata",
           "--embed-thumbnail",
