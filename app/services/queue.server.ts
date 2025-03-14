@@ -14,6 +14,8 @@ export interface DownloadJobData {
   bulkSongIds?: string[];
   jobId?: string;
   zipPath?: string;
+  sanitizedPlaylistName?: string;
+  originalPlaylistName?: string;
 }
 
 // Create download queue
@@ -75,8 +77,13 @@ cleanupQueue.add(
 
 // Setup Bull Board for monitoring
 const serverAdapter = new ExpressAdapter();
+serverAdapter.setBasePath('/admin/queues');
+
 createBullBoard({
-  queues: [new BullAdapter(downloadQueue), new BullAdapter(cleanupQueue)],
+  queues: [
+    new BullAdapter(downloadQueue),
+    new BullAdapter(cleanupQueue),
+  ],
   serverAdapter,
 });
 

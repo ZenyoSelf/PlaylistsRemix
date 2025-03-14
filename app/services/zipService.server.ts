@@ -395,4 +395,97 @@ export async function createZipFromSongs(
     
     throw error;
   }
+}
+
+/**
+ * Creates a zip file from a list of file paths
+ * @param filePaths Array of file paths to include in the zip
+ * @param outputZipPath Full path where the zip file should be created
+ * @returns Path to the created zip file
+ */
+export async function createZipFromFilePaths(
+  filePaths: string[],
+  outputZipPath: string
+): Promise<string> {
+  // Create the directory for the zip file if it doesn't exist
+  const outputDir = path.dirname(outputZipPath);
+  await fs.mkdir(outputDir, { recursive: true });
+  
+  // Create a write stream for the zip file with optimized buffer size
+  const output = createWriteStream(outputZipPath, {
+    highWaterMark: 1024 * 1024 // 1MB buffer for writing
+  });
+  
+  // Create archiver with optimized settings
+  const archive = archiver('zip', {
+    zlib: { level: 5 }, // Compression level (0-9)
+    highWaterMark: 1024 * 1024 // 1MB buffer for archiver
+  });
+  
+  // Pipe the archive to the file
+  archive.pipe(output);
+  
+  // Keep track of files that were successfully added
+  const addedFiles: string[] = [];
+  const failedFiles: string[] = [];
+  
+  // Process each file and add to the archive using streams
+  for (const filePath of filePaths) {
+    try {
+      // Get the filename from the path
+      const fileName = path.basename(filePath);
+      
+      console.log(`Adding to zip: ${fileName}`);
+      
+      // Create a read stream for the file
+      const fileStream = createReadStream(filePath);
+      
+      // Add the file to the archive
+      archive.append(fileStream, { name: fileName });
+      
+      // Track the file as successfully added
+      addedFiles.push(fileName);
+    } catch (error) {
+      console.error(`Error adding file to zip: ${filePath}`, error);
+      failedFiles.push(filePath);
+      // Continue with other files even if one fails
+    }
+  }
+  
+  // Log summary before finalizing
+  console.log(`Zip summary: ${addedFiles.length} files added, ${failedFiles.length} files failed`);
+  
+  try {
+    // Finalize the archive
+    await archive.finalize();
+    
+    // Return a promise that resolves when the archive is finished
+    return new Promise((resolve, reject) => {
+      output.on('close', () => {
+        const finalSize = archive.pointer();
+        const sizeInMB = (finalSize / (1024 * 1024)).toFixed(2);
+        console.log(`Zip created successfully: ${outputZipPath} (${sizeInMB} MB)`);
+        resolve(outputZipPath);
+      });
+      
+      archive.on('error', (err) => {
+        console.error('Error creating zip:', err);
+        reject(err);
+      });
+      
+      // Handle warnings
+      archive.on('warning', (err) => {
+        if (err.code === 'ENOENT') {
+          // Log warning but don't fail
+          console.warn(`Warning during zip creation: ${err.message}`);
+        } else {
+          // For other warnings, log error
+          console.error('Error during zip creation:', err);
+        }
+      });
+    });
+  } catch (error) {
+    console.error('Error finalizing archive:', error);
+    throw error;
+  }
 } 

@@ -5,6 +5,7 @@ import { downloadQueue } from '~/services/queue.server';
 import { emitProgress } from '~/workers/downloadWorker.server';
 import path from 'path';
 import fs from 'fs/promises';
+import { sanitizeDirectoryName } from '~/utils/file-utils';
 
 export const action: ActionFunction = async ({ request }) => {
   if (request.method !== 'POST') {
@@ -32,9 +33,12 @@ export const action: ActionFunction = async ({ request }) => {
       : (Array.isArray(song.playlist) && song.playlist.length > 0 
         ? song.playlist[0] 
         : 'default');
+    
+    // Sanitize the playlist name to avoid issues with special characters like emojis
+    const sanitizedPlaylistName = sanitizeDirectoryName(playlistName);
 
     // Create the output directory structure before queueing the job
-    const outputDir = path.join(process.cwd(), "tmp", userIdStr, playlistName);
+    const outputDir = path.join(process.cwd(), "tmp", userIdStr, sanitizedPlaylistName);
     try {
       await fs.mkdir(outputDir, { recursive: true });
       console.log(`Created output directory: ${outputDir}`);
@@ -44,10 +48,12 @@ export const action: ActionFunction = async ({ request }) => {
       // The download worker will try to create it again
     }
 
-    // Add job to queue
+    // Add job to queue with sanitized playlist name
     const job = await downloadQueue.add({
       songId: songId,
       userId: userIdStr,
+      sanitizedPlaylistName: sanitizedPlaylistName,
+      originalPlaylistName: playlistName
     }, {
       attempts: 3,
       backoff: {

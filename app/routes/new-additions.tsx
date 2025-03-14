@@ -77,6 +77,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   if (youtubeSession?.email) {
     lastRefreshYoutube = await getLatestRefresh(youtubeSession.email, 'youtube');
   }
+  console.log("spotifySession", spotifySession);
+  console.log("youtubeSession", youtubeSession);
 
   const url = new URL(request.url);
   const page = parseInt(url.searchParams.get("page") || "1");
@@ -292,6 +294,8 @@ export default function NewAdditions() {
     "Youtube": true
   });
   
+
+
   // Initialize selectedPlaylists from URL parameters
   const [selectedPlaylists, setSelectedPlaylists] = useState<string[]>(
     searchParams.get("excludedPlaylists") 

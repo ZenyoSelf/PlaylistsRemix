@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs/promises";
 import { getSongById, updateSongDownloadStatus, updateSongLocalStatus } from "~/services/db.server";
 import { findMatchingFile } from "~/utils/file-matching.server";
+import { sanitizeDirectoryName } from "~/utils/file-utils";
 
 export const loader: LoaderFunction = async ({ params, request }) => {
   const songId = params.songId;
@@ -30,11 +31,14 @@ export const loader: LoaderFunction = async ({ params, request }) => {
     const userIdStr = String(userId);
 
     // Get the first playlist name or use 'default' if none exists
-    const playlistName = song.playlists && song.playlists.length > 0 
+    const rawPlaylistName = song.playlists && song.playlists.length > 0 
       ? song.playlists[0].name 
       : (Array.isArray(song.playlist) && song.playlist.length > 0 
         ? song.playlist[0] 
         : 'default');
+    
+    // Sanitize the playlist name to avoid issues with special characters like emojis
+    const playlistName = sanitizeDirectoryName(rawPlaylistName);
 
     // Get directory path
     const dirPath = path.join(

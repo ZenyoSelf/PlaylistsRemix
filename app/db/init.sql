@@ -51,10 +51,22 @@ CREATE TABLE IF NOT EXISTS song_playlist (
     FOREIGN KEY(playlist_id) REFERENCES playlist(id) ON DELETE CASCADE
 );
 
+-- User preferences table for storing file format preferences
+CREATE TABLE IF NOT EXISTS user_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    file_format TEXT NOT NULL DEFAULT 'flac',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES user(id) ON DELETE CASCADE,
+    UNIQUE(user_id)
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_song_user ON song(user_id);
 CREATE INDEX IF NOT EXISTS idx_playlist_user ON playlist(user_id);
 CREATE INDEX IF NOT EXISTS idx_song_playlist_song ON song_playlist(song_id);
 CREATE INDEX IF NOT EXISTS idx_song_playlist_playlist ON song_playlist(playlist_id);
 CREATE INDEX IF NOT EXISTS idx_playlist_platform ON playlist(platform);
-CREATE INDEX IF NOT EXISTS idx_playlist_owner ON playlist(owner_id); 
+CREATE INDEX IF NOT EXISTS idx_playlist_owner ON playlist(owner_id);
+CREATE INDEX IF NOT EXISTS idx_user_preferences_user ON user_preferences(user_id); 

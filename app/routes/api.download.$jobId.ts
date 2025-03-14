@@ -4,6 +4,7 @@ import { createReadStream, statSync } from "fs";
 import { downloadQueue } from "~/services/queue.server";
 import { getSongById, updateSongDownloadStatus } from "~/services/db.server";
 import { findMatchingFile } from "~/utils/file-matching.server";
+import { sanitizeDirectoryName } from "~/utils/file-utils";
 
 export const loader: LoaderFunction = async ({ params, request }) => {
   const jobId = params.jobId;
@@ -20,7 +21,7 @@ export const loader: LoaderFunction = async ({ params, request }) => {
     }
 
     // Get job data
-    const { songId, userId } = job.data;
+    const { songId = '', userId = '', sanitizedPlaylistName } = job.data;
 
     // Get song details
     const song = await getSongById(songId);
@@ -28,12 +29,21 @@ export const loader: LoaderFunction = async ({ params, request }) => {
       return json({ error: "Song not found" }, { status: 404 });
     }
 
-    // Get the first playlist name or use 'default' if none exists
-    const playlistName = song.playlists && song.playlists.length > 0 
-      ? song.playlists[0].name 
-      : (Array.isArray(song.playlist) && song.playlist.length > 0 
-        ? song.playlist[0] 
-        : 'default');
+    // Use sanitizedPlaylistName from job data if available, otherwise sanitize the playlist name
+    let playlistName;
+    if (sanitizedPlaylistName) {
+      playlistName = sanitizedPlaylistName;
+    } else {
+      // Get the first playlist name or use 'default' if none exists
+      const rawPlaylistName = song.playlists && song.playlists.length > 0 
+        ? song.playlists[0].name 
+        : (Array.isArray(song.playlist) && song.playlist.length > 0 
+          ? song.playlist[0] 
+          : 'default');
+      
+      // Sanitize the playlist name to avoid issues with special characters like emojis
+      playlistName = sanitizeDirectoryName(rawPlaylistName);
+    }
 
     // Get directory path
     const dirPath = path.join(

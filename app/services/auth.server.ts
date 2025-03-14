@@ -36,6 +36,9 @@ if (!process.env.GOOGLE_CALLBACK_URL) {
 export const SPOTIFY_SESSION_KEY = "spotify:session";
 export const YOUTUBE_SESSION_KEY = "youtube:session";
 
+// Create the authenticator
+export const authenticator = new Authenticator(sessionStorage);
+
 // See https://developer.spotify.com/documentation/general/guides/authorization/scopes
 const scopes = [
   "user-read-email",
@@ -70,42 +73,72 @@ export const spotifyStrategy = new SpotifyStrategy(
 
 export const googleStrategy = new GoogleStrategy(
   {
-    clientID: process.env.GOOGLE_CLIENT_ID || "",
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || "",
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: process.env.GOOGLE_CALLBACK_URL,
     scope: "https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email",
-    
   },
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async ({ accessToken, refreshToken, extraParams, profile }) => {
-    // Get the user email from the profile
-    const email = profile.emails[0].value;
-    console.log(profile)
-    // Return the user object that will be stored in the session
-    return { 
-      email, 
-      accessToken, 
-      refreshToken, 
-      provider: "youtube",
-      user: {
-        id: profile.id,
-        email: profile.emails[0].value,
-        name: profile.displayName,
-        image: profile.photos?.[0]?.value,
-      },
-    };
-  }
+  async ({ accessToken, refreshToken, extraParams, profile }) => ({
+    accessToken,
+    refreshToken,
+    expiresAt: Date.now() + extraParams.expires_in * 1000,
+    tokenType: extraParams.token_type,
+    provider: "youtube",
+    email: profile.emails[0].value,
+    user: {
+      id: profile.id,
+      email: profile.emails[0].value,
+      name: profile.displayName,
+      image: profile._json.picture,
+    },
+  })
 );
-
-// Create authenticator with default options
-export const authenticator = new Authenticator(sessionStorage, {
-  sessionKey: "auth:session", // Default session key
-  sessionErrorKey: "auth:error", // Default error key
-});
 
 // Register strategies with proper session keys
 authenticator.use(spotifyStrategy, "spotify");
 authenticator.use(googleStrategy, "youtube");
+
+/**
+ * Refresh Spotify access token using the refresh token
+ * @param refreshToken The refresh token
+ * @returns New access token and expiration time
+ */
+export async function refreshSpotifyToken(refreshToken: string) {
+  try {
+    console.log("Refreshing Spotify access token...");
+    
+    const params = new URLSearchParams();
+    params.append("grant_type", "refresh_token");
+    params.append("refresh_token", refreshToken);
+    
+    const response = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": `Basic ${Buffer.from(
+          `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`
+        ).toString("base64")}`,
+      },
+      body: params,
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Error refreshing token: ${response.status} ${response.statusText}`, errorText);
+      throw new Error(`Failed to refresh token: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    return {
+      accessToken: data.access_token,
+      expiresAt: Date.now() + data.expires_in * 1000,
+    };
+  } catch (error) {
+    console.error("Error refreshing Spotify token:", error);
+    throw error;
+  }
+}
 
 // Helper functions for session access
 
@@ -134,8 +167,59 @@ export async function getProviderSession(request: Request, provider: "spotify" |
 
 // Get access token for a specific provider
 export async function getProviderAccessToken(request: Request, provider: "spotify" | "youtube") {
-  const session = await getProviderSession(request, provider);
-  return session?.accessToken;
+  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+  const providerSession = await getProviderSession(request, provider);
+  
+  if (!providerSession) {
+    return null;
+  }
+  
+  // If it's a Spotify session and the token is expired, refresh it
+  if (provider === "spotify" && providerSession.expiresAt < Date.now()) {
+    try {
+      console.log("Spotify token expired, refreshing...");
+      
+      if (!providerSession.refreshToken) {
+        console.error("No refresh token available");
+        return null;
+      }
+      
+      // Refresh the token
+      const { accessToken, expiresAt } = await refreshSpotifyToken(providerSession.refreshToken);
+      
+      // Update the session with the new token
+      const updatedSession = {
+        ...providerSession,
+        accessToken,
+        expiresAt,
+      };
+      
+      // Update the session storage
+      session.set(SPOTIFY_SESSION_KEY, updatedSession);
+      
+      // Commit the session
+      const cookie = await sessionStorage.commitSession(session);
+      
+      // Append the cookie to the request headers for future requests in this context
+      const headers = new Headers(request.headers);
+      headers.set("Cookie", cookie);
+      
+      // Create a new request with the updated headers
+      Object.defineProperty(request, "headers", {
+        value: headers,
+        writable: true,
+      });
+      
+      console.log("Spotify token refreshed successfully");
+      
+      return accessToken;
+    } catch (error) {
+      console.error("Failed to refresh Spotify token:", error);
+      return null;
+    }
+  }
+  
+  return providerSession?.accessToken;
 }
 
 // Check if user is authenticated with a specific provider
