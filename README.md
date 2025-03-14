@@ -147,4 +147,19 @@ DONE : Also set the songs from batch download to download when download is done 
 
 Treat the batch download songs into sub process. (5 songs by 5 songs in 5 process) -> makes the bulk dl faster
 Add accurate metadata to file (right artist, right album name, ...)
-Add a file type options (flac, wav, kbps ) for songs. should be a route 
+DONE Add a file type options (flac, wav, kbps ) for songs.
+
+Album art fetching and embedding
+Lyrics fetching and embedding
+
+Scheduled Downloads
+Set up automatic downloads at specific times
+Periodic playlist synchronization
+
+UI/UX Improvements
+Responsive design for all screen sizes
+Keyboard shortcuts for power users
+
+ADD playlist download (either custom-url)
+
+Bulk DL should be one CMD -> all url's passed as parameter directly. (WAY FASTER PROCESSING)
