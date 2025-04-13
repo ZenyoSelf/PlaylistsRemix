@@ -1,0 +1,31 @@
+node_modules
+
+/.cache
+/build
+.env
+
+# Database files
+app/db/songs.db
+app/db/song.db
+app/db/backups/*
+app/db/migrations/*
+
+# External utilities
+app/utils/*
+app/utils/ffmpeg.exe
+app/utils/ffplay.exe
+app/utils/ffprobe.exe
+app/utils/yt-dlp.exe
+
+# Temporary files
+tmp/*
+app/tmp/**
+app/tmp/**/**/**
+
+# Ignore all files and directories under tmp
+/tmp/
+/app/tmp/
+
+# Ensure we don't commit your sensitive files again
+.env
+remove-files.txt
