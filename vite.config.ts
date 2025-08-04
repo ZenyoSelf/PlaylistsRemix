@@ -19,11 +19,13 @@ export default defineConfig({
       "@mapbox/node-pre-gyp",
       "mock-aws-s3",
       "aws-sdk",
-      "nock"
+      "nock",
+      "sqlite3"
     ],
   },
   ssr: {
-    noExternal: ["sqlite3", "bcrypt"]
+    external: ["sqlite3", "bcrypt", "@mapbox/node-pre-gyp"],
+    noExternal: []
   },
   define: {
     global: "globalThis",
