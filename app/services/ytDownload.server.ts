@@ -9,8 +9,8 @@ import { getUserPreferredFormat } from "./userPreferences.server";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const ytDlpPath = path.resolve(__dirname, "../utils/yt-dlp.exe");
-const ffmpegPath = path.resolve(__dirname, "../utils/ffmpeg.exe");
+const ytDlpPath = path.resolve(__dirname, "../utils/yt-dlp");
+const ffmpegPath = path.resolve(__dirname, "../utils/ffmpeg");
 
 export async function downloadYouTubeVideo(
   videoUrl: string,
@@ -42,7 +42,6 @@ export async function downloadYouTubeVideo(
           "--add-metadata",
           "--embed-thumbnail",
           "-o", `"${outputTemplate}"`,
-          "--windows-filenames",
           "--ffmpeg-location", path.dirname(ffmpegPath),
           "--no-mtime",
         ],
@@ -140,7 +139,6 @@ export async function downloadFromCustomUrl(
           "--add-metadata",
           "--embed-thumbnail",
           "-o", `"${outputTemplate}"`,
-          "--windows-filenames",
           "--ffmpeg-location", path.dirname(ffmpegPath),
           "--no-mtime",
         ],

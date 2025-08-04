@@ -15,8 +15,8 @@ import { convertSpotifyToYouTubeMusic } from '~/services/spotToYt.server';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const ytDlpPath = path.resolve(__dirname, "../utils/yt-dlp.exe");
-const ffmpegPath = path.resolve(__dirname, "../utils/ffmpeg.exe");
+const ytDlpPath = path.resolve(__dirname, "../utils/yt-dlp");
+const ffmpegPath = path.resolve(__dirname, "../utils/ffmpeg");
 
 // Define the job data interface
 interface DownloadJobData {

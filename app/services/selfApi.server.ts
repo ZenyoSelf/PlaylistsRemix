@@ -27,8 +27,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Construct the path to the yt-dlp.exe executable
-const ytDlpPath = path.resolve(__dirname, "../utils/yt-dlp.exe");
-const ffmpegPath = path.resolve(__dirname, "../utils/ffmpeg.exe");
+const ytDlpPath = path.resolve(__dirname, "../utils/yt-dlp");
+const ffmpegPath = path.resolve(__dirname, "../utils/ffmpeg");
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function getLikedSongsSpotify(
@@ -351,7 +351,6 @@ export async function downloadSpotifySong(
       "--embed-thumbnail",
       "-o", outputTemplate,
       "-P", `"${outputDir}"`,
-      "--windows-filenames",
       "--ffmpeg-location", path.dirname(ffmpegPath),
       "--no-mtime",
     ];

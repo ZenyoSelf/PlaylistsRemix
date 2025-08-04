@@ -3,7 +3,6 @@ import path from 'path';
 import { createWriteStream, createReadStream } from 'fs';
 import archiver from 'archiver';
 import { Song } from '~/types/customs';
-import { findMatchingFile } from '~/utils/file-matching.server';
 import { emitProgress } from '~/workers/downloadWorker.server';
 
 /**
@@ -21,53 +20,53 @@ export async function createZipFromSongs(
   // Create a temporary directory for the zip file
   const tmpDir = path.join(process.cwd(), 'tmp', userId);
   await fs.mkdir(tmpDir, { recursive: true });
-  
+
   const zipPath = path.join(tmpDir, `${zipName}.zip`);
-  
+
   // Create a write stream for the zip file with optimized buffer size
   const output = createWriteStream(zipPath, {
     highWaterMark: 1024 * 1024 // 1MB buffer for writing
   });
-  
+
   // Create archiver with optimized settings
   const archive = archiver('zip', {
     zlib: { level: 5 }, // Compression level (0-9)
     highWaterMark: 1024 * 1024 // 1MB buffer for archiver
   });
-  
+
   // Pipe the archive to the file
   archive.pipe(output);
-  
+
   // Keep track of files that were successfully added
   const addedFiles: string[] = [];
   const failedFiles: string[] = [];
-  
+
   // Track which songs were included in the zip by ID
   const includedSongIds: number[] = [];
-  
+
   // For bulk downloads, look in the bulk folder
   const bulkDir = path.join(process.cwd(), 'tmp', userId, 'bulk');
   const bulkDirExists = await fs.access(bulkDir).then(() => true).catch(() => false);
-  
+
   // Initialize counters for progress tracking
   let processedSongs = 0;
   const totalSongs = songs.length;
-  
+
   // Set up progress tracking
   archive.on('progress', (progressData) => {
     // Calculate overall percentage based on entries processed vs total entries
     const { entries } = progressData;
     const entriesTotal = entries.total;
     const entriesProcessed = entries.processed;
-    
+
     // Calculate percentage (0-100)
-    const percentage = entriesTotal > 0 
-      ? Math.round((entriesProcessed / entriesTotal) * 100) 
+    const percentage = entriesTotal > 0
+      ? Math.round((entriesProcessed / entriesTotal) * 100)
       : 0;
-    
+
     // Log progress to console
     console.log(`Zip progress for ${zipName}: ${percentage}% (${entriesProcessed}/${entriesTotal} files)`);
-    
+
     // Emit progress to client via SSE
     // Only emit on significant changes to avoid flooding the client
     if (percentage % 5 === 0 || percentage === 100) {
@@ -80,122 +79,120 @@ export async function createZipFromSongs(
       });
     }
   });
-  
+
   // Process each song and add to the archive using streams
   for (const song of songs) {
     try {
       // Get the directory path for the song
       let dirPath;
-      
+
       // If this is a bulk download (zipName is a job ID starting with 'bulk-'), use the bulk folder
       if (zipName.startsWith('bulk-') && bulkDirExists) {
         dirPath = bulkDir;
       } else {
         // For regular downloads, use the playlist folder
-        const playlistName = song.playlists && song.playlists.length > 0 
-          ? song.playlists[0].name 
-          : (Array.isArray(song.playlist) && song.playlist.length > 0 
-            ? song.playlist[0] 
+        const playlistName = song.playlists && song.playlists.length > 0
+          ? song.playlists[0].name
+          : (Array.isArray(song.playlist) && song.playlist.length > 0
+            ? song.playlist[0]
             : 'default');
-        
+
         dirPath = path.join(process.cwd(), 'tmp', userId, playlistName);
       }
-      
+
       // Find the matching file
-      const artistName = Array.isArray(song.artist_name) 
-        ? song.artist_name.join(' ') 
-        : typeof song.artist_name === 'string' 
-          ? song.artist_name 
+      const artistName = Array.isArray(song.artist_name)
+        ? song.artist_name.join(' ')
+        : typeof song.artist_name === 'string'
+          ? song.artist_name
           : undefined;
-      
+
       console.log(`Looking for file matching song: "${song.title}" by "${artistName}" in ${dirPath}`);
-      
+
       // Add a retry mechanism for finding the file
       let downloadFile = null;
       let retryCount = 0;
       const maxRetries = 3;
-      
+
       while (retryCount < maxRetries && !downloadFile) {
         try {
-          // First try the standard findMatchingFile function
-          downloadFile = await findMatchingFile(dirPath, song.title || '', artistName);
-          
+
           // If that fails, try a more aggressive approach for bulk folder files
-          if (!downloadFile && dirPath.endsWith('bulk')) {
-            console.log(`Standard matching failed, trying bulk folder specific matching for "${song.title}"`);
-            
-            // Get all files in the directory
-            const allFiles = await fs.readdir(dirPath);
-            console.log(`All files in bulk folder: ${JSON.stringify(allFiles)}`);
-            
-            // Try to match files with "NA -" prefix
-            const naFiles = allFiles.filter(file => file.startsWith('NA -'));
-            
-            if (naFiles.length > 0) {
-              console.log(`Found ${naFiles.length} files with "NA -" prefix`);
-              
-              // Try to match by title keywords
-              const titleKeywords = (song.title || '').toLowerCase().split(' ')
-                .filter(word => word.length > 3)  // Only use meaningful keywords
-                .map(word => word.replace(/[^\w]/g, '')); // Remove special characters
-              
-              console.log(`Title keywords for "${song.title}": ${JSON.stringify(titleKeywords)}`);
-              
-              if (titleKeywords.length > 0) {
-                // Find the file with the most keyword matches
-                const matches = naFiles.map(file => {
-                  const fileName = file.toLowerCase();
-                  const matchCount = titleKeywords.filter(keyword => fileName.includes(keyword)).length;
-                  const matchRatio = matchCount / titleKeywords.length;
-                  return { file, matchCount, matchRatio };
-                })
+
+          console.log(`Standard matching failed, trying bulk folder specific matching for "${song.title}"`);
+
+          // Get all files in the directory
+          const allFiles = await fs.readdir(dirPath);
+          console.log(`All files in bulk folder: ${JSON.stringify(allFiles)}`);
+
+          // Try to match files with "NA -" prefix
+          const naFiles = allFiles.filter(file => file.startsWith('NA -'));
+
+          if (naFiles.length > 0) {
+            console.log(`Found ${naFiles.length} files with "NA -" prefix`);
+
+            // Try to match by title keywords
+            const titleKeywords = (song.title || '').toLowerCase().split(' ')
+              .filter(word => word.length > 3)  // Only use meaningful keywords
+              .map(word => word.replace(/[^\w]/g, '')); // Remove special characters
+
+            console.log(`Title keywords for "${song.title}": ${JSON.stringify(titleKeywords)}`);
+
+            if (titleKeywords.length > 0) {
+              // Find the file with the most keyword matches
+              const matches = naFiles.map(file => {
+                const fileName = file.toLowerCase();
+                const matchCount = titleKeywords.filter(keyword => fileName.includes(keyword)).length;
+                const matchRatio = matchCount / titleKeywords.length;
+                return { file, matchCount, matchRatio };
+              })
                 .filter(match => match.matchRatio > 0.3) // At least 30% of keywords match
                 .sort((a, b) => b.matchRatio - a.matchRatio); // Sort by match ratio descending
-                
-                if (matches.length > 0) {
-                  console.log(`Found bulk file match: "${matches[0].file}" with match ratio ${matches[0].matchRatio}`);
-                  downloadFile = matches[0].file;
-                }
-              }
-              
-              // If keyword matching failed, try artist name matching as a fallback
-              if (!downloadFile && artistName) {
-                const artistKeywords = artistName.toLowerCase().split(' ')
-                  .filter(word => word.length > 2)
-                  .map(word => word.replace(/[^\w]/g, ''));
-                
-                if (artistKeywords.length > 0) {
-                  const artistMatches = naFiles.filter(file => {
-                    const fileName = file.toLowerCase();
-                    return artistKeywords.some(keyword => fileName.includes(keyword));
-                  });
-                  
-                  if (artistMatches.length > 0) {
-                    console.log(`Found artist match in bulk folder: "${artistMatches[0]}"`);
-                    downloadFile = artistMatches[0];
-                  }
-                }
+
+              if (matches.length > 0) {
+                console.log(`Found bulk file match: "${matches[0].file}" with match ratio ${matches[0].matchRatio}`);
+                downloadFile = matches[0].file;
               }
             }
-            
-            // Last resort: if we have a single file left that hasn't been matched to any song yet,
-            // and we're on the last song, just use that file
-            if (!downloadFile && processedSongs === totalSongs - 1) {
-              // Get list of files that have already been added to the zip
-              const remainingFiles = allFiles.filter(file => 
-                !addedFiles.includes(file) && 
-                !failedFiles.includes(file)
-              );
-              
-              if (remainingFiles.length === 1) {
-                console.log(`Last resort match - using last remaining file: "${remainingFiles[0]}"`);
-                downloadFile = remainingFiles[0];
+
+            // If keyword matching failed, try artist name matching as a fallback
+            if (!downloadFile && artistName) {
+              const artistKeywords = artistName.toLowerCase().split(' ')
+                .filter(word => word.length > 2)
+                .map(word => word.replace(/[^\w]/g, ''));
+
+              if (artistKeywords.length > 0) {
+                const artistMatches = naFiles.filter(file => {
+                  const fileName = file.toLowerCase();
+                  return artistKeywords.some(keyword => fileName.includes(keyword));
+                });
+
+                if (artistMatches.length > 0) {
+                  console.log(`Found artist match in bulk folder: "${artistMatches[0]}"`);
+                  downloadFile = artistMatches[0];
+                }
               }
             }
           }
-          
+
+          // Last resort: if we have a single file left that hasn't been matched to any song yet,
+          // and we're on the last song, just use that file
+          if (!downloadFile && processedSongs === totalSongs - 1) {
+            // Get list of files that have already been added to the zip
+            const remainingFiles = allFiles.filter(file =>
+              !addedFiles.includes(file) &&
+              !failedFiles.includes(file)
+            );
+
+            if (remainingFiles.length === 1) {
+              console.log(`Last resort match - using last remaining file: "${remainingFiles[0]}"`);
+              downloadFile = remainingFiles[0];
+            }
+          }
+
+
           if (downloadFile) break;
-          
+
           console.log(`File not found on attempt ${retryCount + 1}/${maxRetries}, retrying...`);
           await new Promise(resolve => setTimeout(resolve, 500));
           retryCount++;
@@ -206,11 +203,11 @@ export async function createZipFromSongs(
           await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
-      
+
       if (downloadFile) {
         const filePath = path.join(dirPath, downloadFile);
         console.log(`Found matching file: ${filePath}`);
-        
+
         // Create a clean filename for the download that includes artist name
         let artistDisplay = '';
         if (Array.isArray(song.artist_name)) {
@@ -233,11 +230,11 @@ export async function createZipFromSongs(
             .replace(/\s+/g, ' ')      // Normalize whitespace
             .trim();
         }
-        
+
         // Create filename with format: "Artist1, Artist2, Artist3 - title.ext"
         const songTitle = (song.title || path.parse(downloadFile).name).trim();
         const fileExt = path.parse(downloadFile).ext || '.flac';
-        
+
         // If the file starts with "NA -", extract the actual title from the filename
         let cleanFilename;
         if (downloadFile.startsWith('NA -')) {
@@ -246,30 +243,30 @@ export async function createZipFromSongs(
           cleanFilename = cleanedName + fileExt;
           console.log(`Using cleaned NA filename: ${cleanFilename}`);
         } else {
-          cleanFilename = artistDisplay 
+          cleanFilename = artistDisplay
             ? `${artistDisplay} - ${songTitle}${fileExt}`
             : `${songTitle}${fileExt}`;
         }
-          
+
         console.log(`Adding to zip with filename: ${cleanFilename}`);
-        
+
         try {
           // Create a read stream for the file
           const fileStream = createReadStream(filePath);
-          
+
           // Add the file to the archive with the clean filename
           archive.append(fileStream, { name: cleanFilename });
-          
+
           // Track the file as successfully added
           addedFiles.push(downloadFile);
-          
+
           // Track the song ID as included in the zip
           includedSongIds.push(song.id);
-          
+
           // Update progress
           processedSongs++;
           const progress = Math.round((processedSongs / totalSongs) * 100);
-          
+
           // Emit progress event
           emitProgress(userId, {
             type: 'progress',
@@ -278,7 +275,7 @@ export async function createZipFromSongs(
             songName: `Zipping ${processedSongs}/${totalSongs}: ${songTitle}`,
             isBulk: zipName.startsWith('bulk-')
           });
-          
+
           console.log(`Added file to zip (${processedSongs}/${totalSongs}): ${cleanFilename}`);
         } catch (error) {
           console.error(`Error adding file to zip: ${filePath}`, error);
@@ -295,11 +292,11 @@ export async function createZipFromSongs(
       // Continue with other songs even if one fails
     }
   }
-  
+
   // Log summary before finalizing
   console.log(`Zip summary for ${zipName}: ${addedFiles.length} files added, ${failedFiles.length} files failed`);
   console.log(`Included song IDs: ${includedSongIds.join(', ')}`);
-  
+
   // Emit progress update before finalizing
   emitProgress(userId, {
     type: 'progress',
@@ -312,14 +309,14 @@ export async function createZipFromSongs(
   try {
     // Finalize the archive
     await archive.finalize();
-    
+
     // Return a promise that resolves when the archive is finished
     return new Promise((resolve, reject) => {
       output.on('close', () => {
         const finalSize = archive.pointer();
         const sizeInMB = (finalSize / (1024 * 1024)).toFixed(2);
         console.log(`Zip created successfully: ${zipPath} (${sizeInMB} MB)`);
-        
+
         // Emit final completion message
         emitProgress(userId, {
           type: 'progress',
@@ -328,7 +325,7 @@ export async function createZipFromSongs(
           songName: `Zip file created: ${addedFiles.length} songs, ${sizeInMB} MB`,
           isBulk: zipName.startsWith('bulk-')
         });
-        
+
         // Store the included song IDs in a metadata file
         const metadataPath = path.join(tmpDir, `${zipName}.meta.json`);
         fs.writeFile(metadataPath, JSON.stringify({
@@ -337,20 +334,20 @@ export async function createZipFromSongs(
           failedFiles,
           timestamp: new Date().toISOString()
         }))
-        .then(() => {
-          console.log(`Metadata saved to ${metadataPath}`);
-          resolve(zipPath);
-        })
-        .catch(err => {
-          console.error(`Error saving metadata: ${err.message}`);
-          // Still resolve with the zip path even if metadata saving fails
-          resolve(zipPath);
-        });
+          .then(() => {
+            console.log(`Metadata saved to ${metadataPath}`);
+            resolve(zipPath);
+          })
+          .catch(err => {
+            console.error(`Error saving metadata: ${err.message}`);
+            // Still resolve with the zip path even if metadata saving fails
+            resolve(zipPath);
+          });
       });
-      
+
       archive.on('error', (err) => {
         console.error('Error creating zip:', err);
-        
+
         // Emit error message
         emitProgress(userId, {
           type: 'error',
@@ -359,10 +356,10 @@ export async function createZipFromSongs(
           error: err.message,
           isBulk: zipName.startsWith('bulk-')
         });
-        
+
         reject(err);
       });
-      
+
       // Handle warnings
       archive.on('warning', (err) => {
         if (err.code === 'ENOENT') {
@@ -383,7 +380,7 @@ export async function createZipFromSongs(
     });
   } catch (error) {
     console.error('Error finalizing archive:', error);
-    
+
     // Emit error message
     emitProgress(userId, {
       type: 'error',
@@ -392,7 +389,7 @@ export async function createZipFromSongs(
       error: error instanceof Error ? error.message : 'Unknown error',
       isBulk: zipName.startsWith('bulk-')
     });
-    
+
     throw error;
   }
 }
@@ -410,39 +407,39 @@ export async function createZipFromFilePaths(
   // Create the directory for the zip file if it doesn't exist
   const outputDir = path.dirname(outputZipPath);
   await fs.mkdir(outputDir, { recursive: true });
-  
+
   // Create a write stream for the zip file with optimized buffer size
   const output = createWriteStream(outputZipPath, {
     highWaterMark: 1024 * 1024 // 1MB buffer for writing
   });
-  
+
   // Create archiver with optimized settings
   const archive = archiver('zip', {
     zlib: { level: 5 }, // Compression level (0-9)
     highWaterMark: 1024 * 1024 // 1MB buffer for archiver
   });
-  
+
   // Pipe the archive to the file
   archive.pipe(output);
-  
+
   // Keep track of files that were successfully added
   const addedFiles: string[] = [];
   const failedFiles: string[] = [];
-  
+
   // Process each file and add to the archive using streams
   for (const filePath of filePaths) {
     try {
       // Get the filename from the path
       const fileName = path.basename(filePath);
-      
+
       console.log(`Adding to zip: ${fileName}`);
-      
+
       // Create a read stream for the file
       const fileStream = createReadStream(filePath);
-      
+
       // Add the file to the archive
       archive.append(fileStream, { name: fileName });
-      
+
       // Track the file as successfully added
       addedFiles.push(fileName);
     } catch (error) {
@@ -451,14 +448,14 @@ export async function createZipFromFilePaths(
       // Continue with other files even if one fails
     }
   }
-  
+
   // Log summary before finalizing
   console.log(`Zip summary: ${addedFiles.length} files added, ${failedFiles.length} files failed`);
-  
+
   try {
     // Finalize the archive
     await archive.finalize();
-    
+
     // Return a promise that resolves when the archive is finished
     return new Promise((resolve, reject) => {
       output.on('close', () => {
@@ -467,12 +464,12 @@ export async function createZipFromFilePaths(
         console.log(`Zip created successfully: ${outputZipPath} (${sizeInMB} MB)`);
         resolve(outputZipPath);
       });
-      
+
       archive.on('error', (err) => {
         console.error('Error creating zip:', err);
         reject(err);
       });
-      
+
       // Handle warnings
       archive.on('warning', (err) => {
         if (err.code === 'ENOENT') {
