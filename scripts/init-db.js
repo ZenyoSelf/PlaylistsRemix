@@ -16,8 +16,9 @@ if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 
-// Path to the database file
+// Path to the database file and init.sql
 const dbPath = path.join(dbDir, 'songs.db');
+const initSqlPath = path.join(dbDir, 'init.sql');
 
 // Check if the database file already exists
 if (fs.existsSync(dbPath)) {
@@ -25,6 +26,15 @@ if (fs.existsSync(dbPath)) {
   console.log('If you want to recreate it, delete the file first.');
   process.exit(0);
 }
+
+// Check if init.sql exists
+if (!fs.existsSync(initSqlPath)) {
+  console.error(`init.sql file not found at ${initSqlPath}`);
+  process.exit(1);
+}
+
+// Read the init.sql file
+const initSql = fs.readFileSync(initSqlPath, 'utf8');
 
 // Create a new database
 console.log(`Creating new database at ${dbPath}...`);
@@ -34,56 +44,48 @@ const db = new sqlite3.Database(dbPath);
 db.serialize(() => {
   db.run('BEGIN TRANSACTION;');
 
-  // Create user table
-  db.run(`
-    CREATE TABLE IF NOT EXISTS user (
-      user TEXT PRIMARY KEY,
-      last_refresh TEXT
-    );
-  `);
-
-  // Create song table with all the necessary columns
-  db.run(`
-    CREATE TABLE IF NOT EXISTS song (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT,
-      artist_name TEXT, -- Stores JSON array of artists
-      album TEXT,
-      album_image TEXT,
-      playlist TEXT, -- Stores JSON array of playlists
-      platform TEXT,
-      url TEXT,
-      downloaded BOOLEAN DEFAULT 0,
-      local BOOLEAN DEFAULT 0,
-      platform_added_at TEXT,
-      user TEXT,
-      FOREIGN KEY(user) REFERENCES user(user)
-    );
-  `);
-
-  // Create migrations table to track schema changes
-  db.run(`
-    CREATE TABLE IF NOT EXISTS migrations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE,
-      applied_at TEXT
-    );
-  `);
-
-  // Record our initial migrations as already applied
-  db.run(`
-    INSERT INTO migrations (name, applied_at) 
-    VALUES 
-      ('add_local_column_to_song', CURRENT_TIMESTAMP),
-      ('modify_playlist_column', CURRENT_TIMESTAMP);
-  `);
-
-  db.run('COMMIT;', (err) => {
+  // Execute the init.sql content
+  db.exec(initSql, (err) => {
     if (err) {
-      console.error('Error creating database:', err.message);
+      console.error('Error executing init.sql:', err.message);
+      db.run('ROLLBACK;');
       process.exit(1);
     }
-    console.log('Database initialized successfully!');
-    db.close();
+    
+    // Create migrations table to track schema changes (in serialize callback)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS migrations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE,
+        applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `, (err) => {
+      if (err) {
+        console.error('Error creating migrations table:', err.message);
+        db.run('ROLLBACK;');
+        process.exit(1);
+      }
+
+      // Record that we've initialized the database with init.sql
+      db.run(`
+        INSERT INTO migrations (name, applied_at) 
+        VALUES ('initial_schema_from_init_sql', CURRENT_TIMESTAMP);
+      `, (err) => {
+        if (err) {
+          console.error('Error inserting migration record:', err.message);
+          db.run('ROLLBACK;');
+          process.exit(1);
+        }
+
+        db.run('COMMIT;', (err) => {
+          if (err) {
+            console.error('Error committing transaction:', err.message);
+            process.exit(1);
+          }
+          console.log('Database initialized successfully using init.sql!');
+          db.close();
+        });
+      });
+    });
   });
-}); 
+});
