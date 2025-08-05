@@ -14,6 +14,9 @@ export default defineConfig({
     }),
     tsconfigPaths(),
   ],
+  server: {
+    allowedHosts: ["zenyoweb.local"],
+  },
   optimizeDeps: {
     exclude: [
       "@mapbox/node-pre-gyp",
