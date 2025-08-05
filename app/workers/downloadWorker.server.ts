@@ -5,7 +5,6 @@ import { getSongById, getSongsByIds, updateSongDownloadStatus, updateSongLocalSt
 import { createZipFromFilePaths } from '~/services/zipService.server';
 import fs from 'fs/promises';
 import { Job } from 'bull';
-import { sanitizeDirectoryName } from '~/utils/file-utils';
 import { execFile } from 'child_process';
 import { getUserPreferredFormat } from '~/services/userPreferences.server';
 import { fileURLToPath } from 'url';
