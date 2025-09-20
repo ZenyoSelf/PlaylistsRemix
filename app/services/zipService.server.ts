@@ -125,52 +125,48 @@ export async function createZipFromSongs(
           const allFiles = await fs.readdir(dirPath);
           console.log(`All files in bulk folder: ${JSON.stringify(allFiles)}`);
 
-          // Try to match files with "NA -" prefix
-          const naFiles = allFiles.filter(file => file.startsWith('NA -'));
+          // Use standard file matching without NA prefix
+          console.log(`Looking for files matching song: "${song.title}"`);
 
-          if (naFiles.length > 0) {
-            console.log(`Found ${naFiles.length} files with "NA -" prefix`);
+          // Try to match by title keywords using all files
+          const titleKeywords = (song.title || '').toLowerCase().split(' ')
+            .filter(word => word.length > 3)  // Only use meaningful keywords
+            .map(word => word.replace(/[^\w]/g, '')); // Remove special characters
 
-            // Try to match by title keywords
-            const titleKeywords = (song.title || '').toLowerCase().split(' ')
-              .filter(word => word.length > 3)  // Only use meaningful keywords
-              .map(word => word.replace(/[^\w]/g, '')); // Remove special characters
+          console.log(`Title keywords for "${song.title}": ${JSON.stringify(titleKeywords)}`);
 
-            console.log(`Title keywords for "${song.title}": ${JSON.stringify(titleKeywords)}`);
+          if (titleKeywords.length > 0) {
+            // Find the file with the most keyword matches
+            const matches = allFiles.map(file => {
+              const fileName = file.toLowerCase();
+              const matchCount = titleKeywords.filter(keyword => fileName.includes(keyword)).length;
+              const matchRatio = matchCount / titleKeywords.length;
+              return { file, matchCount, matchRatio };
+            })
+              .filter(match => match.matchRatio > 0.3) // At least 30% of keywords match
+              .sort((a, b) => b.matchRatio - a.matchRatio); // Sort by match ratio descending
 
-            if (titleKeywords.length > 0) {
-              // Find the file with the most keyword matches
-              const matches = naFiles.map(file => {
-                const fileName = file.toLowerCase();
-                const matchCount = titleKeywords.filter(keyword => fileName.includes(keyword)).length;
-                const matchRatio = matchCount / titleKeywords.length;
-                return { file, matchCount, matchRatio };
-              })
-                .filter(match => match.matchRatio > 0.3) // At least 30% of keywords match
-                .sort((a, b) => b.matchRatio - a.matchRatio); // Sort by match ratio descending
-
-              if (matches.length > 0) {
-                console.log(`Found bulk file match: "${matches[0].file}" with match ratio ${matches[0].matchRatio}`);
-                downloadFile = matches[0].file;
-              }
+            if (matches.length > 0) {
+              console.log(`Found bulk file match: "${matches[0].file}" with match ratio ${matches[0].matchRatio}`);
+              downloadFile = matches[0].file;
             }
+          }
 
-            // If keyword matching failed, try artist name matching as a fallback
-            if (!downloadFile && artistName) {
-              const artistKeywords = artistName.toLowerCase().split(' ')
-                .filter(word => word.length > 2)
-                .map(word => word.replace(/[^\w]/g, ''));
+          // If keyword matching failed, try artist name matching as a fallback
+          if (!downloadFile && artistName) {
+            const artistKeywords = artistName.toLowerCase().split(' ')
+              .filter(word => word.length > 2)
+              .map(word => word.replace(/[^\w]/g, ''));
 
-              if (artistKeywords.length > 0) {
-                const artistMatches = naFiles.filter(file => {
-                  const fileName = file.toLowerCase();
-                  return artistKeywords.some(keyword => fileName.includes(keyword));
-                });
+            if (artistKeywords.length > 0) {
+              const artistMatches = allFiles.filter(file => {
+                const fileName = file.toLowerCase();
+                return artistKeywords.some(keyword => fileName.includes(keyword));
+              });
 
-                if (artistMatches.length > 0) {
-                  console.log(`Found artist match in bulk folder: "${artistMatches[0]}"`);
-                  downloadFile = artistMatches[0];
-                }
+              if (artistMatches.length > 0) {
+                console.log(`Found artist match in bulk folder: "${artistMatches[0]}"`);
+                downloadFile = artistMatches[0];
               }
             }
           }
@@ -235,18 +231,10 @@ export async function createZipFromSongs(
         const songTitle = (song.title || path.parse(downloadFile).name).trim();
         const fileExt = path.parse(downloadFile).ext || '.flac';
 
-        // If the file starts with "NA -", extract the actual title from the filename
-        let cleanFilename;
-        if (downloadFile.startsWith('NA -')) {
-          // Use the original filename but remove the "NA -" prefix
-          const cleanedName = downloadFile.substring(5).trim();
-          cleanFilename = cleanedName + fileExt;
-          console.log(`Using cleaned NA filename: ${cleanFilename}`);
-        } else {
-          cleanFilename = artistDisplay
-            ? `${artistDisplay} - ${songTitle}${fileExt}`
-            : `${songTitle}${fileExt}`;
-        }
+        // Use clean filename format consistently
+        const cleanFilename = artistDisplay
+          ? `${artistDisplay} - ${songTitle}${fileExt}`
+          : `${songTitle}${fileExt}`;
 
         console.log(`Adding to zip with filename: ${cleanFilename}`);
 
@@ -429,6 +417,13 @@ export async function createZipFromFilePaths(
   // Process each file and add to the archive using streams
   for (const filePath of filePaths) {
     try {
+      // Check if the path exists and is a file (not a directory)
+      const stats = await fs.stat(filePath);
+      if (!stats.isFile()) {
+        console.log(`Skipping directory: ${path.basename(filePath)}`);
+        continue;
+      }
+
       // Get the filename from the path
       const fileName = path.basename(filePath);
 

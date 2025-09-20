@@ -7,6 +7,46 @@ import { Song, SpotifyTrackItem, SpotifyTrack, SpotifyPlaylist } from "~/types/c
 import { getProviderSession } from "./auth.server";
 import { getUserPreferredFormat } from "./userPreferences.server";
 
+/**
+ * Convert FLAC file to AIFF using ffmpeg while preserving metadata
+ */
+async function convertFlacToAiff(flacFilePath: string): Promise<string> {
+  const aiffFilePath = flacFilePath.replace(/\.flac$/i, '.aiff');
+  const ffmpegPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../utils/ffmpeg");
+  
+  return new Promise((resolve, reject) => {
+    execFile(
+      ffmpegPath,
+      [
+        '-i', flacFilePath,
+        '-c:a', 'pcm_s16be', // Use PCM 16-bit big-endian for AIFF
+        '-write_id3v2', '1', // Enable ID3v2 metadata writing for AIFF
+        '-map_metadata', '0', // Copy all metadata
+        '-map', '0:a', // Map audio stream
+        '-map', '0:v?', // Map video/cover art if present (optional)
+        '-y', // Overwrite output file if it exists
+        aiffFilePath
+      ],
+      (error, stdout, stderr) => {
+        if (error) {
+          console.error(`ffmpeg conversion error: ${error.message}`);
+          console.error(`ffmpeg stderr: ${stderr}`);
+          reject(error);
+        } else {
+          console.log(`Successfully converted ${flacFilePath} to ${aiffFilePath}`);
+          console.log(`ffmpeg stdout: ${stdout}`);
+          console.log(`Metadata and album art should be preserved in AIFF file`);
+          // Clean up the original FLAC file
+          fs.unlink(flacFilePath).catch(err => 
+            console.warn(`Could not delete original FLAC file: ${err.message}`)
+          );
+          resolve(aiffFilePath);
+        }
+      }
+    );
+  });
+}
+
 // Define interfaces for Spotify API responses
 // Removed interfaces as they are now imported from customs.ts
 
@@ -321,8 +361,11 @@ export async function downloadSpotifySong(
     }
 
     // Get user's preferred format
-    const audioFormat = await getUserPreferredFormat(userId);
-    console.log(`Using audio format: ${audioFormat} for user ${userId}`);
+    const userPreferredFormat = await getUserPreferredFormat(userId);
+    console.log(`Using audio format: ${userPreferredFormat} for user ${userId}`);
+    
+    // Use FLAC for download if user wants AIFF (we'll convert after)
+    const downloadFormat = userPreferredFormat === 'aiff' ? 'flac' : userPreferredFormat;
 
     // Create the output directory with the correct structure: tmp/userId/playlistName
     const outputDir = path.join(process.cwd(), "tmp", userId, playlistName);
@@ -334,18 +377,14 @@ export async function downloadSpotifySong(
     
     console.log(`Executing yt-dlp for: ${song.toString()}`);
     
-    // For bulk downloads, use a different output template to preserve more of the original YouTube title
-    // This helps with matching files later
-    const isBulkDownload = playlistName === 'bulk';
-    const outputTemplate = isBulkDownload
-      ? `"NA - %(title)s.%(ext)s"` // Prefix with NA to identify files from YouTube
-      : `"%(artist)s - %(title)s.%(ext)s"`; // Standard format for regular downloads
+    // Use consistent format for all downloads - no more NA prefix!
+    const outputTemplate = `"%(artist)s - %(title)s.%(ext)s"`;
     
     const ytDlpCommand = [
       song.toString(),
       "-f", "bestaudio",
       "-x",
-      "--audio-format", audioFormat,
+      "--audio-format", downloadFormat,
       "--audio-quality", "0",
       "--add-metadata",
       "--embed-thumbnail",
@@ -429,8 +468,16 @@ export async function downloadSpotifySong(
       throw new Error(`Could not find downloaded file for "${trackName}" by "${artists.join(', ')}" in ${outputDir}`);
     }
 
-    const filePath = path.join(outputDir, downloadedFile);
+    let filePath = path.join(outputDir, downloadedFile);
     console.log(`File found: ${filePath}`);
+    
+    // Convert to AIFF if user requested AIFF format
+    if (userPreferredFormat === 'aiff' && downloadedFile.toLowerCase().endsWith('.flac')) {
+      console.log(`Converting FLAC to AIFF for user preference: ${filePath}`);
+      filePath = await convertFlacToAiff(filePath);
+      // Update the filename after conversion
+      downloadedFile = path.basename(filePath);
+    }
     
     // Return both the file path and original filename
     return JSON.stringify({

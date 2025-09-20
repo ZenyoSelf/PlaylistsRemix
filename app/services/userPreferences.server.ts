@@ -40,7 +40,7 @@ export async function setUserPreferredFormat(userId: number | string, format: st
     const userIdNum = typeof userId === 'string' ? parseInt(userId, 10) : userId;
     
     // Validate format
-    const validFormats = ['flac', 'mp3', 'wav', 'm4a'];
+    const validFormats = ['flac', 'mp3', 'wav', 'aiff', 'm4a'];
     const safeFormat = validFormats.includes(format) ? format : 'flac';
     
     // Update or insert user preference

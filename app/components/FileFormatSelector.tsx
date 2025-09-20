@@ -63,14 +63,16 @@ export default function FileFormatSelector({ userId, currentFormat = "flac" }: F
                   <SelectItem value="flac">FLAC (Lossless)</SelectItem>
                   <SelectItem value="mp3">MP3 (Compressed)</SelectItem>
                   <SelectItem value="wav">WAV (Uncompressed)</SelectItem>
+                  <SelectItem value="aiff">AIFF (Uncompressed)</SelectItem>
                   <SelectItem value="m4a">M4A (AAC)</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground mt-1">
-                {selectedFormat === "flac" && "High quality lossless audio format with good compression"}
-                {selectedFormat === "mp3" && "Smaller file size, good compatibility, some quality loss"}
-                {selectedFormat === "wav" && "Highest quality uncompressed audio, very large file size"}
-                {selectedFormat === "m4a" && "Good quality and compression, excellent for Apple devices"}
+                {selectedFormat === "flac" && "High quality lossless audio format with good compression. Supports thumbnails & metadata."}
+                {selectedFormat === "mp3" && "Smaller file size, good compatibility, some quality loss. Supports thumbnails & metadata."}
+                {selectedFormat === "wav" && "Highest quality uncompressed audio, very large file size. No thumbnail support."}
+                {selectedFormat === "aiff" && "High quality uncompressed audio with thumbnail & metadata support. Large file size."}
+                {selectedFormat === "m4a" && "Good quality and compression, excellent for Apple devices. Supports thumbnails & metadata."}
               </p>
             </div>
             

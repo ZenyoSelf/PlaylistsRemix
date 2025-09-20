@@ -12,6 +12,45 @@ const __dirname = path.dirname(__filename);
 const ytDlpPath = path.resolve(__dirname, "../utils/yt-dlp");
 const ffmpegPath = path.resolve(__dirname, "../utils/ffmpeg");
 
+/**
+ * Convert FLAC file to AIFF using ffmpeg while preserving metadata
+ */
+async function convertFlacToAiff(flacFilePath: string): Promise<string> {
+  const aiffFilePath = flacFilePath.replace(/\.flac$/i, '.aiff');
+  
+  return new Promise((resolve, reject) => {
+      execFile(
+        ffmpegPath,
+        [
+          '-i', flacFilePath,
+          '-c:a', 'pcm_s16be', // Use PCM 16-bit big-endian for AIFF
+          '-write_id3v2', '1', // Enable ID3v2 metadata writing for AIFF
+          '-map_metadata', '0', // Copy all metadata
+          '-map', '0:a', // Map audio stream
+          '-map', '0:v?', // Map video/cover art if present (optional)
+          '-y', // Overwrite output file if it exists
+          aiffFilePath
+        ],
+      (error, stdout, stderr) => {
+        if (error) {
+          console.error(`ffmpeg conversion error: ${error.message}`);
+          console.error(`ffmpeg stderr: ${stderr}`);
+          reject(error);
+        } else {
+          console.log(`Successfully converted ${flacFilePath} to ${aiffFilePath}`);
+          console.log(`ffmpeg stdout: ${stdout}`);
+          console.log(`Metadata and album art should be preserved in AIFF file`);
+          // Clean up the original FLAC file
+          fs.unlink(flacFilePath).catch(err => 
+            console.warn(`Could not delete original FLAC file: ${err.message}`)
+          );
+          resolve(aiffFilePath);
+        }
+      }
+    );
+  });
+}
+
 export async function downloadYouTubeVideo(
   videoUrl: string,
   outputDir: string,
@@ -20,13 +59,16 @@ export async function downloadYouTubeVideo(
 ): Promise<string> {
   try {
     // Get user's preferred format if not provided
-    const audioFormat = format || await getUserPreferredFormat(userId);
+    const userPreferredFormat = format || await getUserPreferredFormat(userId);
+    
+    // Use FLAC for download if user wants AIFF (we'll convert after)
+    const downloadFormat = userPreferredFormat === 'aiff' ? 'flac' : userPreferredFormat;
     
     // Create user directory if it doesn't exist
     const userDir = path.join(outputDir, userId);
     await fs.mkdir(userDir, { recursive: true });
     
-    // Set output template for the downloaded file
+    // Set output template for the downloaded file (title only to avoid NA prefix)
     const outputTemplate = path.join(userDir, "%(title)s.%(ext)s");
     
     // Execute yt-dlp to download the video
@@ -37,10 +79,11 @@ export async function downloadYouTubeVideo(
           videoUrl,
           "-f", "bestaudio",
           "-x",
-          "--audio-format", audioFormat,
+          "--audio-format", downloadFormat,
           "--audio-quality", "0",
           "--add-metadata",
           "--embed-thumbnail",
+          "--output-na-placeholder", "Unknown",
           "-o", `"${outputTemplate}"`,
           "--ffmpeg-location", path.dirname(ffmpegPath),
           "--no-mtime",
@@ -75,7 +118,13 @@ export async function downloadYouTubeVideo(
     }
 
     const downloadedFile = fileStat[0].file;
-    const filePath = path.join(userDir, downloadedFile);
+    let filePath = path.join(userDir, downloadedFile);
+    
+    // Convert to AIFF if user requested AIFF format
+    if (userPreferredFormat === 'aiff' && downloadedFile.toLowerCase().endsWith('.flac')) {
+      console.log(`Converting FLAC to AIFF for user preference: ${filePath}`);
+      filePath = await convertFlacToAiff(filePath);
+    }
     
     return filePath;
   } catch (error) {
@@ -117,7 +166,10 @@ export async function downloadFromCustomUrl(
 ): Promise<{ path: string; originalName: string }> {
   try {
     // Get user's preferred format if not provided
-    const audioFormat = format || await getUserPreferredFormat(userId);
+    const userPreferredFormat = format || await getUserPreferredFormat(userId);
+    
+    // Use FLAC for download if user wants AIFF (we'll convert after)
+    const downloadFormat = userPreferredFormat === 'aiff' ? 'flac' : userPreferredFormat;
     
     // Create user directory if it doesn't exist
     const userDir = path.join(outputDir, userId, playlistName);
@@ -134,10 +186,11 @@ export async function downloadFromCustomUrl(
           url,
           "-f", "bestaudio",
           "-x",
-          "--audio-format", audioFormat,
+          "--audio-format", downloadFormat,
           "--audio-quality", "0",
           "--add-metadata",
           "--embed-thumbnail",
+          "--output-na-placeholder", "Unknown",
           "-o", `"${outputTemplate}"`,
           "--ffmpeg-location", path.dirname(ffmpegPath),
           "--no-mtime",
@@ -172,11 +225,19 @@ export async function downloadFromCustomUrl(
     }
 
     const downloadedFile = fileStat[0].file;
-    const filePath = path.join(userDir, downloadedFile);
+    let filePath = path.join(userDir, downloadedFile);
+    let finalFileName = downloadedFile;
+    
+    // Convert to AIFF if user requested AIFF format
+    if (userPreferredFormat === 'aiff' && downloadedFile.toLowerCase().endsWith('.flac')) {
+      console.log(`Converting FLAC to AIFF for user preference: ${filePath}`);
+      filePath = await convertFlacToAiff(filePath);
+      finalFileName = path.basename(filePath);
+    }
     
     return {
       path: filePath,
-      originalName: downloadedFile
+      originalName: finalFileName
     };
   } catch (error) {
     console.error("Error downloading from custom URL:", error);

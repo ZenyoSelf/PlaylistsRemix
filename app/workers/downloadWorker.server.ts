@@ -9,6 +9,7 @@ import { execFile } from 'child_process';
 import { getUserPreferredFormat } from '~/services/userPreferences.server';
 import { fileURLToPath } from 'url';
 import { convertSpotifyToYouTubeMusic } from '~/services/spotToYt.server';
+import { sanitizeDirectoryName } from '~/utils/file-utils';
 
 // Construct __dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -16,6 +17,45 @@ const __dirname = path.dirname(__filename);
 
 const ytDlpPath = path.resolve(__dirname, "../utils/yt-dlp");
 const ffmpegPath = path.resolve(__dirname, "../utils/ffmpeg");
+
+/**
+ * Convert FLAC file to AIFF using ffmpeg while preserving metadata
+ */
+async function convertFlacToAiff(flacFilePath: string): Promise<string> {
+  const aiffFilePath = flacFilePath.replace(/\.flac$/i, '.aiff');
+  
+  return new Promise((resolve, reject) => {
+    execFile(
+      ffmpegPath,
+      [
+        '-i', flacFilePath,
+        '-c:a', 'pcm_s16be', // Use PCM 16-bit big-endian for AIFF
+        '-write_id3v2', '1', // Enable ID3v2 metadata writing for AIFF
+        '-map_metadata', '0', // Copy all metadata
+        '-map', '0:a', // Map audio stream
+        '-map', '0:v?', // Map video/cover art if present (optional)
+        '-y', // Overwrite output file if it exists
+        aiffFilePath
+      ],
+      (error, stdout, stderr) => {
+        if (error) {
+          console.error(`ffmpeg conversion error: ${error.message}`);
+          console.error(`ffmpeg stderr: ${stderr}`);
+          reject(error);
+        } else {
+          console.log(`Successfully converted ${flacFilePath} to ${aiffFilePath}`);
+          console.log(`ffmpeg stdout: ${stdout}`);
+          console.log(`Metadata and album art should be preserved in AIFF file`);
+          // Clean up the original FLAC file
+          fs.unlink(flacFilePath).catch(err => 
+            console.warn(`Could not delete original FLAC file: ${err.message}`)
+          );
+          resolve(aiffFilePath);
+        }
+      }
+    );
+  });
+}
 
 // Define the job data interface
 interface DownloadJobData {
@@ -358,10 +398,12 @@ async function processBulkDownload(job: Job<DownloadJobData>) {
     console.log(`Created batch file with ${processedUrls.length} URLs`);
 
     // Get user's preferred format
-    const format = await getUserPreferredFormat(userId);
+    const userPreferredFormat = await getUserPreferredFormat(userId);
+    // Use FLAC for download if user wants AIFF (we'll convert after)
+    const downloadFormat = userPreferredFormat === 'aiff' ? 'flac' : userPreferredFormat;
     
-    // Set the working directory to the output directory and use a simple output template
-    const outputTemplate = "%(artist)s - %(title)s.%(ext)s"; // Artist - Title format
+    // Set the working directory to the output directory and use title-only template to avoid NA prefix
+    const outputTemplate = "%(title)s.%(ext)s"; // Title only format
     console.log(`Using output template: ${outputTemplate} in directory: ${outputDir}`);
     
     // Log the command we're about to run for debugging
@@ -377,7 +419,7 @@ async function processBulkDownload(job: Job<DownloadJobData>) {
         [
           '--batch-file', batchFile,
           '--extract-audio',
-          '--audio-format', format,
+          '--audio-format', downloadFormat,
           '--audio-quality', '0',
           '--add-metadata',
           '--embed-thumbnail',
@@ -495,6 +537,43 @@ async function processBulkDownload(job: Job<DownloadJobData>) {
           console.log(`Found ${audioFiles.length} downloaded files`);
           
           if (audioFiles.length > 0) {
+            // Convert FLAC files to AIFF if user requested AIFF format
+            if (userPreferredFormat === 'aiff') {
+              console.log(`Converting FLAC files to AIFF for user preference...`);
+              emitProgress(userId, {
+                type: 'info',
+                jobId: job.id,
+                songName: `Converting ${audioFiles.length} files to AIFF format...`,
+                isBulk: true
+              });
+              
+              const flacFiles = audioFiles.filter(file => file.toLowerCase().endsWith('.flac'));
+              console.log(`Found ${flacFiles.length} FLAC files to convert`);
+              
+              for (let i = 0; i < flacFiles.length; i++) {
+                const flacFile = flacFiles[i];
+                const flacPath = path.join(outputDir, flacFile);
+                
+                try {
+                  console.log(`Converting file ${i + 1}/${flacFiles.length}: ${flacFile}`);
+                  await convertFlacToAiff(flacPath);
+                  
+                  // Update progress
+                  emitProgress(userId, {
+                    type: 'info',
+                    jobId: job.id,
+                    songName: `Converted ${i + 1}/${flacFiles.length} files to AIFF`,
+                    isBulk: true
+                  });
+                } catch (error) {
+                  console.error(`Error converting ${flacFile} to AIFF:`, error);
+                  // Continue with other files even if one conversion fails
+                }
+              }
+              
+              console.log(`AIFF conversion completed for ${flacFiles.length} files`);
+            }
+            
             // Some files were downloaded, consider it a success
             emitProgress(userId, {
               type: 'info',
@@ -524,12 +603,29 @@ async function processBulkDownload(job: Job<DownloadJobData>) {
     
     // Get all files in the bulk folder
     const files = await fs.readdir(outputDir);
-    const songFiles = files.filter(file => 
-      !file.endsWith('.zip') && 
-      !file.endsWith('.part') && 
-      !file.startsWith('.') &&
-      !file.endsWith('.txt') // Exclude our batch file
-    );
+    const songFiles = [];
+    
+    // Filter to only include actual files (not directories)
+    for (const file of files) {
+      if (file.endsWith('.zip') || 
+          file.endsWith('.part') || 
+          file.startsWith('.') ||
+          file.endsWith('.txt')) {
+        continue; // Skip these files
+      }
+      
+      try {
+        const filePath = path.join(outputDir, file);
+        const stats = await fs.stat(filePath);
+        if (stats.isFile()) {
+          songFiles.push(file);
+        } else {
+          console.log(`Skipping directory: ${file}`);
+        }
+      } catch (error) {
+        console.error(`Error checking file ${file}:`, error);
+      }
+    }
     
     if (songFiles.length === 0) {
       throw new Error("No files were downloaded successfully");

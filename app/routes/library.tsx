@@ -20,6 +20,7 @@ import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, Pagi
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import { Loader, CheckCircle, ChevronFirst, ChevronLast, Clock } from "lucide-react";
 import { jsonWithError, jsonWithSuccess } from "remix-toast";
 import { getTotalLikedSongsSpotify } from "~/services/selfApi.server";
@@ -71,6 +72,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const songStatus = url.searchParams.get("songStatus") || "";
   const sortBy = url.searchParams.get("sortBy") || "platform_added_at";
   const sortDirection = url.searchParams.get("sortDirection") || "desc";
+  const onlyMyPlaylists = url.searchParams.get("onlyMyPlaylists") === "true";
 
   // Get songs with pagination and filters
   const songsResult = await getUserSongsFromDB(request, {
@@ -81,7 +83,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     playlist,
     songStatus,
     sortBy,
-    sortDirection: sortDirection as "desc" | "asc"
+    sortDirection: sortDirection as "desc" | "asc",
+    onlyMyPlaylists
   });
 
   // Get filter options (platforms and playlists) from all authenticated accounts
@@ -363,14 +366,16 @@ export default function Library() {
       <div className="relative mx-auto">
       <Card>
         <CardContent className="p-4 space-y-4 relative">
-          <div className="flex flex-wrap gap-4 relative">
-            <Input
-              placeholder="Search songs..."
-              value={searchParams.get("search") || ""}
-              onChange={(e) => handleSearch(e.target.value)}
-              className="max-w-sm"
-            />
-            <div className="w-48">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 relative">
+            <div className="w-full lg:col-span-4">
+              <Input
+                placeholder="Search songs..."
+                value={searchParams.get("search") || ""}
+                onChange={(e) => handleSearch(e.target.value)}
+                className="w-full"
+              />
+            </div>
+            <div className="w-full">
               <Select
                 value={searchParams.get("platform") || "all"}
                 onValueChange={(value) => {
@@ -394,7 +399,7 @@ export default function Library() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="w-48">
+            <div className="w-full">
               <Select
                 value={searchParams.get("playlist") || "all"}
                 onValueChange={(value) => {
@@ -418,7 +423,7 @@ export default function Library() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="w-48">
+            <div className="w-full">
               <Select
                 value={searchParams.get("songStatus") || "all"}
                 onValueChange={(value) => {
@@ -438,6 +443,31 @@ export default function Library() {
                   <SelectItem value="localFiles">Ready to Download</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="w-full">
+              <label htmlFor="my-playlists-filter" className="text-sm font-medium mb-1 block">
+                Ownership
+              </label>
+              <div id="my-playlists-filter" className="flex items-center h-10 px-3 border rounded-md">
+                <Checkbox 
+                  id="only-my-playlists" 
+                  checked={searchParams.get("onlyMyPlaylists") === "true"} 
+                  onCheckedChange={(checked) => {
+                    setSearchParams(prev => {
+                      if (checked === true) {
+                        prev.set("onlyMyPlaylists", "true");
+                      } else {
+                        prev.delete("onlyMyPlaylists");
+                      }
+                      prev.set("page", "1");
+                      return prev;
+                    });
+                  }}
+                />
+                <label htmlFor="only-my-playlists" className="text-sm ml-2">
+                  Only my playlists
+                </label>
+              </div>
             </div>
           </div>
         </CardContent>
